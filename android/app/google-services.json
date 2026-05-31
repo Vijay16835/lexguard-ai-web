@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "594776252575",
+    "project_id": "lexguard-ai-e91b7",
+    "storage_bucket": "lexguard-ai-e91b7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:594776252575:android:52f7b431ec6d15aa5842aa",
+        "android_client_info": {
+          "package_name": "com.lexguard.lexguard_ai"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "594776252575-t80ps25rn4jgabbcg135hvmgppjsphdf.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.lexguard.lexguard_ai",
+            "certificate_hash": "3c9cce9ebdf6c5368896d6a0803d8e05a3242e95"
+          }
+        },
+        {
+          "client_id": "594776252575-cmaektc1h8ec1qf00hp4b65087n9ngq9.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDi3PDAqcPwRuwoKCKYRM7X1077TqW-JoA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "594776252575-cmaektc1h8ec1qf00hp4b65087n9ngq9.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

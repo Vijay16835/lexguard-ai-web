@@ -1,0 +1,22 @@
+{
+    "cmake.sourceDirectory": "C:/LDA Pro/windows/flutter",
+    "git.ignoreLimitWarning": true,
+    "C_Cpp.files.exclude": {
+        "**/.venv": true,
+        "**/venv": true,
+        "**/.dart_tool": true,
+        "**/build": true
+    },
+    "files.exclude": {
+        "**/.venv": true,
+        "**/venv": true,
+        "**/.dart_tool": true,
+        "**/build": true
+    },
+    "search.exclude": {
+        "**/.venv": true,
+        "**/venv": true,
+        "**/.dart_tool": true,
+        "**/build": true
+    }
+}
