@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql://postgres.jrrbplpzqzvvtwyqomdi:[YOUR-SUPABASE-PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
 
-    FIREBASE_CREDENTIALS_PATH: str = "firebase_credentials.json"
+    FIREBASE_CREDENTIALS_PATH: str = "/etc/secrets/firebase_credentials.json"
     FIREBASE_STORAGE_BUCKET: str = "lexguard-ai.appspot.com"
 
     SUPABASE_URL: str = ""

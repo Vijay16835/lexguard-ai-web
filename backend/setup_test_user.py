@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "firebase_credentials.json")
+cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "/etc/secrets/firebase_credentials.json")
 if not os.path.isabs(cred_path):
     cred_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), cred_path)
 os.environ["FIREBASE_CREDENTIALS_PATH"] = cred_path
