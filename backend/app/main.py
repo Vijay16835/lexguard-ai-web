@@ -1,9 +1,13 @@
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, documents, user, ai, notifications, chat, multilingual
 from app.core.config import settings
 from app.db.session import Base
 from app import models
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Database tables creation is handled by Firestore dynamically
 Base.metadata.create_all()
@@ -12,6 +16,22 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
+
+@app.on_event("startup")
+async def startup_event():
+    logger.info("[Startup] Running startup validation checks...")
+    
+    # 1. Database connectivity check
+    from app.services.firebase_service import firebase_service
+    db_ok = firebase_service.check_connectivity()
+    if not db_ok:
+        logger.critical("[Startup] Database connectivity check failed! Please verify DATABASE_URL and pooler configuration.")
+        
+    # 2. Email/SMTP configuration check
+    from app.services.email_service import email_service
+    email_ok = email_service.validate_configuration()
+    if not email_ok:
+        logger.warning("[Startup] Email/SMTP configuration check failed! OTP features might be unavailable.")
 
 # Set all CORS enabled origins
 app.add_middleware(

@@ -81,13 +81,13 @@ async def signup(user_in: UserCreate, db = Depends(get_db)):
     except TimeoutError as te:
         logger.error(f"[Auth API] /signup SMTP Connection Timeout: {te}")
         raise HTTPException(
-            status_code=504, 
+            status_code=400, 
             detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
         )
     except RuntimeError as re:
         logger.error(f"[Auth API] /signup SMTP Service Runtime Error: {re}")
         raise HTTPException(
-            status_code=502,
+            status_code=400,
             detail=f"Email service error: {str(re)}"
         )
     except Exception as e:
@@ -270,13 +270,13 @@ async def send_otp(data: SendOTP, db = Depends(get_db)):
     except TimeoutError as te:
         logger.error(f"[Auth API] /send-otp SMTP Connection Timeout: {te}")
         raise HTTPException(
-            status_code=504, 
+            status_code=400, 
             detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
         )
     except RuntimeError as re:
         logger.error(f"[Auth API] /send-otp SMTP Service Runtime Error: {re}")
         raise HTTPException(
-            status_code=502,
+            status_code=400,
             detail=f"Email service error: {str(re)}"
         )
     except Exception as e:
@@ -324,13 +324,13 @@ async def send_reset_otp(data: ForgotPassword, db = Depends(get_db)):
     except TimeoutError as te:
         logger.error(f"[Auth API] /send-reset-otp SMTP Connection Timeout: {te}")
         raise HTTPException(
-            status_code=504, 
+            status_code=400, 
             detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
         )
     except RuntimeError as re:
         logger.error(f"[Auth API] /send-reset-otp SMTP Service Runtime Error: {re}")
         raise HTTPException(
-            status_code=502,
+            status_code=400,
             detail=f"Email service error: {str(re)}"
         )
     except Exception as e:

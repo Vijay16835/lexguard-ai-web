@@ -112,6 +112,35 @@ class FirebaseService:
         self._db = None
         self._bucket = None
 
+    def check_connectivity(self) -> bool:
+        """Verify database connectivity by acquiring a connection and executing a simple query."""
+        logger.info("[Database Service] Running database connectivity startup check...")
+        conn = None
+        try:
+            conn = self._get_pg_conn()
+            if not conn:
+                logger.error("[Database Service] Database connection check failed: Could not acquire connection from pool.")
+                return False
+            cur = conn.cursor()
+            cur.execute("SELECT 1;")
+            result = cur.fetchone()
+            cur.close()
+            conn.close()
+            if result and result[0] == 1:
+                logger.info("[Database Service] Database connectivity verified successfully (SELECT 1 returned 1).")
+                return True
+            else:
+                logger.error(f"[Database Service] Database connection check failed: Unexpected query result {result}")
+                return False
+        except Exception as e:
+            logger.critical(f"[Database Service] Database connection check failed with exception: {type(e).__name__}: {str(e)}", exc_info=True)
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            return False
+
     def _get_pg_conn(self):
         """Check out a wrapped connection from the shared pool."""
         try:
