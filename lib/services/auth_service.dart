@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:lexguard_ai/core/constants/api_constants.dart';
 import 'package:lexguard_ai/services/api_service.dart';
 
@@ -7,25 +8,25 @@ class AuthService {
   final ApiService _api = ApiService();
 
   Future<Map<String, dynamic>> login(String email, String password) async {
-    print('[AuthService] login() called with email: $email');
+    debugPrint('[AuthService] login() called with email: $email');
     try {
-      print('[AuthService] Sending POST to: ${ApiConstants.login}');
+      debugPrint('[AuthService] Sending POST to: ${ApiConstants.login}');
       final response = await _api.post(
         ApiConstants.login,
         data: {'email': email, 'password': password},
       );
-      print('[AuthService] Response received: ${response.data}');
+      debugPrint('[AuthService] Response received: ${response.data}');
       return {'success': true, 'data': response.data};
     } on DioException catch (e) {
-      print('[AuthService] DioException in login: ${e.type}');
+      debugPrint('[AuthService] DioException in login: ${e.type}');
       if (e.response != null) {
-        print('[AuthService] Backend response status: ${e.response?.statusCode}');
-        print('[AuthService] Backend response data: ${e.response?.data}');
+        debugPrint('[AuthService] Backend response status: ${e.response?.statusCode}');
+        debugPrint('[AuthService] Backend response data: ${e.response?.data}');
       }
-      print('[AuthService] Exception in login: $e');
+      debugPrint('[AuthService] Exception in login: $e');
       return {'success': false, 'message': e.message ?? e.toString()};
     } catch (e) {
-      print('[AuthService] Exception in login: $e');
+      debugPrint('[AuthService] Exception in login: $e');
       return {'success': false, 'message': e.toString()};
     }
   }

@@ -20,19 +20,23 @@ def _get_user_stats_pg(user_id: str) -> dict:
     """Query PostgreSQL for live document count, high-risk count, and AI chat count."""
     stats = {"documents_analyzed": 0, "high_risk_count": 0, "ai_chat_count": 0}
     try:
-        conn = psycopg2.connect(settings.DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM documents WHERE user_id = %s", (user_id,))
-        stats["documents_analyzed"] = cur.fetchone()[0]
-        cur.execute(
-            "SELECT COUNT(*) FROM documents WHERE user_id = %s AND risk_level = 'High'",
-            (user_id,)
-        )
-        stats["high_risk_count"] = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM chat_history WHERE user_id = %s", (user_id,))
-        stats["ai_chat_count"] = cur.fetchone()[0]
-        cur.close()
-        conn.close()
+        from app.services.firebase_service import firebase_service
+        conn = firebase_service._get_pg_conn()
+        if conn:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM documents WHERE user_id = %s", (user_id,))
+            stats["documents_analyzed"] = cur.fetchone()[0]
+            cur.execute(
+                "SELECT COUNT(*) FROM documents WHERE user_id = %s AND risk_level = 'High'",
+                (user_id,)
+            )
+            stats["high_risk_count"] = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM chat_history WHERE user_id = %s", (user_id,))
+            stats["ai_chat_count"] = cur.fetchone()[0]
+            cur.close()
+            conn.close()
+        else:
+            logger.error(f"Failed to obtain Postgres connection in _get_user_stats_pg for {user_id}")
     except Exception as e:
         logger.error(f"Failed to fetch user stats from PostgreSQL for {user_id}: {e}")
     return stats

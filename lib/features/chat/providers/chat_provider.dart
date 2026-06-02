@@ -8,7 +8,7 @@ class ChatProvider extends ChangeNotifier {
   final List<ChatMessage> _messages = [];
   bool _isTyping = false;
   String? _errorMessage;
-  String? _currentDocumentId; // null until a document is selected
+  String? _currentDocumentId;
   String? _currentDocumentName;
   final _uuid = const Uuid();
 
@@ -35,31 +35,39 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sets the document context for chat. Preserves [documentName] if not explicitly provided.
   void setDocumentContext(String documentId, {String? documentName}) {
+    debugPrint('[ChatProvider] setDocumentContext: id=$documentId, name=$documentName');
     _currentDocumentId = documentId;
-    _currentDocumentName = documentName;
+    // Only overwrite documentName if a non-null value is explicitly passed
+    if (documentName != null) {
+      _currentDocumentName = documentName;
+    }
     _errorMessage = null;
     loadHistory();
   }
 
   Future<void> loadHistory() async {
     if (_currentDocumentId == null) {
+      debugPrint('[ChatProvider] loadHistory: no document context, skipping.');
       _errorMessage = null;
       notifyListeners();
       return;
     }
 
+    debugPrint('[ChatProvider] loadHistory: loading for document=$_currentDocumentId');
     _isTyping = true;
     _errorMessage = null;
     notifyListeners();
-    
+
     try {
       final history = await _chatService.getChatHistory(_currentDocumentId!);
       _messages.clear();
       _messages.addAll(history);
+      debugPrint('[ChatProvider] loadHistory: loaded ${history.length} messages.');
     } catch (e) {
-      debugPrint('ChatProvider: Failed to load chat history: $e');
-      _errorMessage = 'Failed to load chat history';
+      debugPrint('[ChatProvider] loadHistory failed (non-fatal): $e');
+      // Don't set error — history is optional, don't block chat
     } finally {
       _isTyping = false;
       notifyListeners();
@@ -71,9 +79,12 @@ class ChatProvider extends ChangeNotifier {
 
     if (_currentDocumentId == null) {
       _errorMessage = 'Please select a document to chat with first';
+      debugPrint('[ChatProvider] sendMessage: no document context set.');
       notifyListeners();
       return;
     }
+
+    debugPrint('[ChatProvider] sendMessage: document=$_currentDocumentId, message="${content.length > 60 ? content.substring(0, 60) + "..." : content}"');
 
     final userMsg = ChatMessage(
       id: _uuid.v4(),
@@ -81,7 +92,7 @@ class ChatProvider extends ChangeNotifier {
       sender: MessageSender.user,
       timestamp: DateTime.now(),
     );
-    
+
     _messages.add(userMsg);
     _isTyping = true;
     _errorMessage = null;
@@ -89,22 +100,28 @@ class ChatProvider extends ChangeNotifier {
 
     try {
       final aiMsg = await _chatService.sendMessage(
-        _currentDocumentId!, 
-        content, 
+        _currentDocumentId!,
+        content,
         language: _selectedLanguage,
         isVoice: _isVoiceResponseEnabled,
       );
       _messages.add(aiMsg);
       _errorMessage = null;
+      debugPrint('[ChatProvider] sendMessage: AI responded successfully.');
       if (onAiResponse != null) {
         onAiResponse(aiMsg.content);
       }
     } catch (e) {
-      debugPrint('ChatProvider: AI chat error: $e');
-      _errorMessage = 'AI service is temporarily unavailable';
+      final errorText = e.toString().replaceFirst('Exception: ', '');
+      debugPrint('[ChatProvider] sendMessage error: $errorText');
+
+      // Set the specific error message from the backend/network
+      _errorMessage = errorText;
+
+      // Add a user-visible error message bubble
       _messages.add(ChatMessage(
         id: _uuid.v4(),
-        content: 'Sorry, I encountered an error processing your request. Please try again.',
+        content: _buildErrorBubbleText(errorText),
         sender: MessageSender.ai,
         timestamp: DateTime.now(),
       ));
@@ -114,13 +131,42 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+  /// Builds a user-friendly error message for the chat bubble.
+  String _buildErrorBubbleText(String errorText) {
+    // Specific known errors → friendly messages
+    if (errorText.contains('not yet available') || errorText.contains('analysis to complete')) {
+      return '⏳ This document is still being analyzed. Please wait a moment and try again.';
+    }
+    if (errorText.contains('not found')) {
+      return '❌ Document not found. Please go back and reopen the document.';
+    }
+    if (errorText.contains('Session expired') || errorText.contains('401')) {
+      return '🔒 Your session has expired. Please log out and log in again.';
+    }
+    if (errorText.contains('timed out') || errorText.contains('timeout')) {
+      return '⏱️ The request timed out. The AI is processing — please try again in a moment.';
+    }
+    if (errorText.contains('Cannot connect') || errorText.contains('internet')) {
+      return '📶 No internet connection. Please check your network and try again.';
+    }
+    if (errorText.contains('permission')) {
+      return '🚫 You do not have permission to chat with this document.';
+    }
+    // Generic fallback
+    return '⚠️ Something went wrong. Please try again.\n\nDetails: $errorText';
+  }
+
   Future<void> clearChat() async {
+    debugPrint('[ChatProvider] clearChat: document=$_currentDocumentId');
     if (_currentDocumentId != null) {
-      await _chatService.clearHistory(_currentDocumentId!);
+      try {
+        await _chatService.clearHistory(_currentDocumentId!);
+      } catch (e) {
+        debugPrint('[ChatProvider] clearChat error (non-fatal): $e');
+      }
     }
     _messages.clear();
     _errorMessage = null;
     notifyListeners();
   }
 }
-

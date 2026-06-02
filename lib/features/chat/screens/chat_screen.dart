@@ -17,7 +17,9 @@ import 'package:lexguard_ai/features/profile/providers/profile_provider.dart';
 
 class ChatScreen extends StatefulWidget {
   final String? documentId;
-  const ChatScreen({super.key, this.documentId});
+  final String? documentName;
+  
+  const ChatScreen({super.key, this.documentId, this.documentName});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -32,10 +34,23 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final chat = context.read<ChatProvider>();
       if (widget.documentId != null) {
-        context.read<ChatProvider>().setDocumentContext(widget.documentId!);
+        // Only call setDocumentContext if the document has changed to avoid
+        // clearing the documentName that was set by the calling screen.
+        if (chat.currentDocumentId != widget.documentId) {
+          debugPrint('[ChatScreen] initState: setting document context: ${widget.documentId}');
+          chat.setDocumentContext(widget.documentId!, documentName: widget.documentName);
+        } else {
+          debugPrint('[ChatScreen] initState: document context already set for ${widget.documentId}, loading history.');
+          chat.loadHistory();
+        }
       }
-      context.read<HomeProvider>().loadDashboard();
+      // Only load dashboard if this is the root ChatScreen (bottom nav), not a pushed route
+      if (!Navigator.canPop(context)) {
+        context.read<HomeProvider>().loadDashboard();
+      }
     });
   }
 
@@ -117,23 +132,31 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     }
 
-    return Scaffold(
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) {
+          debugPrint('[ChatScreen] Back navigation: stopping TTS.');
+          tts.stop();
+        }
+      },
+      child: Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.background,
-        leading: Navigator.canPop(context)
-            ? IconButton(
+        leading: IconButton(
                 onPressed: () {
                   tts.stop();
-                  Navigator.pop(context);
+                  if (Navigator.canPop(context)) {
+                    Navigator.pop(context);
+                  }
                 },
                 icon: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(color: AppColors.cardDark, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppColors.border)),
                   child: Icon(Icons.arrow_back_ios_new, size: 16, color: AppColors.textPrimary),
                 ),
-              )
-            : null,
+              ),
         title: Row(children: [
           Container(
             width: 36, height: 36,
@@ -366,7 +389,8 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
-    );
+    ), // Scaffold
+    ); // PopScope
   }
 
   Widget _buildNoContextView(BuildContext context) {

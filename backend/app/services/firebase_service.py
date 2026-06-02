@@ -8,15 +8,92 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# psycopg2 connection pool — one pool for the lifetime of the process.
+# Replaces per-call psycopg2.connect() which opened a new TCP socket on
+# every database operation.
+# ---------------------------------------------------------------------------
+_pg_pool = None
+
+
+class _PgConnWrapper:
+    """
+    Transparent proxy around a psycopg2 connection checked out from the pool.
+    Overrides close() to call pool.putconn() so every existing conn.close()
+    call site automatically returns the connection without any further changes.
+    """
+    __slots__ = ("_conn", "_pool")
+
+    def __init__(self, conn, pool):
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_pool", pool)
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_conn"), name)
+
+    def __setattr__(self, name, value):
+        setattr(object.__getattribute__(self, "_conn"), name, value)
+
+    def close(self):
+        conn = object.__getattribute__(self, "_conn")
+        pool = object.__getattribute__(self, "_pool")
+        try:
+            pool.putconn(conn)
+        except Exception:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def cursor(self, *args, **kwargs):
+        return object.__getattribute__(self, "_conn").cursor(*args, **kwargs)
+
+    def commit(self):
+        return object.__getattribute__(self, "_conn").commit()
+
+    def rollback(self):
+        return object.__getattribute__(self, "_conn").rollback()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
+def _get_pg_pool():
+    """Lazily initialise and return the shared ThreadedConnectionPool."""
+    global _pg_pool
+    if _pg_pool is None:
+        try:
+            import psycopg2.pool
+            db_url = os.getenv("DATABASE_URL") or settings.DATABASE_URL
+            if "Tvijay@1098" in db_url:
+                db_url = db_url.replace("Tvijay@1098", "Tvijay%401098")
+            _pg_pool = psycopg2.pool.ThreadedConnectionPool(2, 10, dsn=db_url)
+            logger.info("psycopg2 ThreadedConnectionPool initialised (min=2, max=10).")
+        except Exception as e:
+            logger.error(f"Failed to create psycopg2 pool: {e}")
+    return _pg_pool
+
 # Initialize Firebase Admin SDK
 cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
 if not cred_path:
-    logger.error("FIREBASE_CREDENTIALS_PATH environment variable is missing!")
-    raise RuntimeError("FIREBASE_CREDENTIALS_PATH environment variable is missing!")
+    local_default = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "firebase_credentials.json")
+    if os.path.exists(local_default):
+        cred_path = local_default
+    else:
+        logger.error("FIREBASE_CREDENTIALS_PATH environment variable is missing!")
+        raise RuntimeError("FIREBASE_CREDENTIALS_PATH environment variable is missing!")
 
 if not os.path.exists(cred_path):
-    logger.error(f"Firebase credentials file not found at path: {cred_path}")
-    raise FileNotFoundError(f"Firebase credentials file not found at path: {cred_path}")
+    local_fallback = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "firebase_credentials.json")
+    if os.path.exists(local_fallback):
+        logger.warning(f"Configured FIREBASE_CREDENTIALS_PATH '{cred_path}' not found, falling back to local file: {local_fallback}")
+        cred_path = local_fallback
+    else:
+        logger.error(f"Firebase credentials file not found at path: {cred_path}")
+        raise FileNotFoundError(f"Firebase credentials file not found at path: {cred_path}")
 
 try:
     cred = credentials.Certificate(cred_path)
@@ -24,7 +101,7 @@ try:
         bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
         options = {'storageBucket': bucket_name} if bucket_name else {}
         firebase_admin.initialize_app(cred, options)
-        logger.info("Firebase initialized with credentials file.")
+        logger.info(f"Firebase initialized with credentials file at {cred_path}.")
 except Exception as e:
     logger.error(f"Error during Firebase initialization: {e}")
     raise e
@@ -36,18 +113,19 @@ class FirebaseService:
         self._bucket = None
 
     def _get_pg_conn(self):
-        """Get a raw connection to Supabase PostgreSQL."""
+        """Check out a wrapped connection from the shared pool."""
         try:
-            import psycopg2
-            from app.core.config import settings
-            import os
-            db_url = os.getenv("DATABASE_URL") or settings.DATABASE_URL
-            if "Tvijay@1098" in db_url:
-                db_url = db_url.replace("Tvijay@1098", "Tvijay%401098")
-            return psycopg2.connect(db_url)
+            pool = _get_pg_pool()
+            if pool:
+                return _PgConnWrapper(pool.getconn(), pool)
         except Exception as e:
-            logger.error(f"Failed to connect to Supabase PostgreSQL: {e}")
-            return None
+            logger.error(f"Failed to get connection from pool: {e}")
+        return None
+
+    def _release_pg_conn(self, conn):
+        """Explicit release — conn.close() on the wrapper also works."""
+        if conn:
+            conn.close()
 
     @property
     def db(self):
@@ -165,25 +243,23 @@ class FirebaseService:
         
         # 2.5 Dual-write to Supabase PostgreSQL
         try:
-            import psycopg2
-            from app.core.config import settings
-            import os
-            # Use raw URL in case it needs encoding fix
-            db_url = os.getenv("DATABASE_URL").replace("Tvijay@1098", "Tvijay%401098") if os.getenv("DATABASE_URL") else settings.DATABASE_URL
-            conn = psycopg2.connect(db_url)
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO users (id, full_name, email, hashed_password, is_verified, auth_provider)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (email) DO UPDATE SET 
-                    id = EXCLUDED.id,
-                    hashed_password = EXCLUDED.hashed_password,
-                    full_name = EXCLUDED.full_name
-            """, (user_id, full_name, email_clean, password_hash, is_verified, auth_provider))
-            conn.commit()
-            cur.close()
-            conn.close()
-            logger.info(f"Successfully dual-written user {user_id} to Supabase PostgreSQL")
+            conn = self._get_pg_conn()
+            if conn:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO users (id, full_name, email, hashed_password, is_verified, auth_provider)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (email) DO UPDATE SET 
+                        id = EXCLUDED.id,
+                        hashed_password = EXCLUDED.hashed_password,
+                        full_name = EXCLUDED.full_name
+                """, (user_id, full_name, email_clean, password_hash, is_verified, auth_provider))
+                conn.commit()
+                cur.close()
+                conn.close()
+                logger.info(f"Successfully dual-written user {user_id} to Supabase PostgreSQL")
+            else:
+                logger.error(f"Failed to get PostgreSQL connection for dual-write user {user_id}")
         except Exception as e:
             logger.error(f"Failed to insert user {user_id} into PostgreSQL: {e}")
             

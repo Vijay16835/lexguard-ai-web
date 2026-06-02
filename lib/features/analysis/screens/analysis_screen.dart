@@ -125,9 +125,22 @@ class _AnalysisContent extends StatelessWidget {
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: () {
-                  final provider = context.read<ChatProvider>();
-                  provider.setDocumentContext(documentId, documentName: analysis.documentName);
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(documentId: documentId)));
+                  debugPrint('[AnalysisScreen] Navigating to ChatScreen: documentId=$documentId, name=${analysis.documentName}');
+                  // Set full context (id + name) before pushing so ChatScreen.initState
+                  // skips the redundant setDocumentContext call, preserving documentName.
+                  context.read<ChatProvider>().setDocumentContext(
+                    documentId,
+                    documentName: analysis.documentName,
+                  );
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (ctx) => ChatScreen(
+                        documentId: documentId,
+                        documentName: analysis.documentName,
+                      ),
+                    ),
+                  );
                 },
                 style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold, foregroundColor: AppColors.navy, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), padding: const EdgeInsets.symmetric(vertical: 12)),
                 icon: const Icon(Icons.chat_bubble_outline, size: 18),

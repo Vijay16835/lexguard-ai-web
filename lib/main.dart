@@ -72,13 +72,14 @@ class LexGuardApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => SttService()),
         ChangeNotifierProvider(create: (_) => LanguageProvider()),
       ],
-      child: Consumer<ProfileProvider>(
-        builder: (context, profile, _) {
-          AppColors.setDarkMode(profile.isDarkMode);
+      child: Selector<ProfileProvider, bool>(
+        selector: (_, profile) => profile.isDarkMode,
+        builder: (context, isDarkMode, _) {
+          AppColors.setDarkMode(isDarkMode);
           return MaterialApp(
             title: 'LexGuard AI',
             debugShowCheckedModeBanner: false,
-            theme: profile.isDarkMode ? AppTheme.darkTheme : AppTheme.lightTheme,
+            theme: isDarkMode ? AppTheme.darkTheme : AppTheme.lightTheme,
             initialRoute: '/',
             routes: {
               '/': (context) => const SplashScreen(),
@@ -100,14 +101,14 @@ class LexGuardApp extends StatelessWidget {
                   otp: args['otp'],
                 );
               },
-              '/home': (context) => const MainShell(child: SizedBox()),
+              '/home': (context) => const MainShell(child: SizedBox.shrink()),
               '/analysis': (context) => const AnalysisScreen(),
               '/chat': (context) => const ChatScreen(),
               '/clauses': (context) => const ClausesScreen(),
               '/settings': (context) => const SettingsScreen(),
             },
             builder: (context, child) {
-              return child ?? const SizedBox();
+              return child ?? const SizedBox.shrink();
             },
           );
         },

@@ -190,7 +190,7 @@ class _DocumentChatScreenState extends State<DocumentChatScreen> {
                     height: 48,
                     decoration: BoxDecoration(
                       color: provider.isChatting
-                          ? AppColors.gold.withOpacity(0.3)
+                          ? AppColors.gold.withValues(alpha: 0.3)
                           : AppColors.gold,
                       shape: BoxShape.circle,
                     ),
@@ -344,7 +344,7 @@ class _DocumentChatScreenState extends State<DocumentChatScreen> {
       width: 8,
       height: 8,
       decoration: BoxDecoration(
-        color: AppColors.gold.withOpacity(0.6),
+        color: AppColors.gold.withValues(alpha: 0.6),
         shape: BoxShape.circle,
       ),
     )

@@ -57,9 +57,11 @@ class SttService extends ChangeNotifier {
           onResult(_lastWords);
           notifyListeners();
         },
-        localeId: _currentLocaleId,
-        listenFor: const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 5),
+        listenOptions: stt.SpeechListenOptions(
+          localeId: _currentLocaleId,
+          listenFor: const Duration(seconds: 30),
+          pauseFor: const Duration(seconds: 5),
+        ),
       );
       _isListening = true;
       notifyListeners();

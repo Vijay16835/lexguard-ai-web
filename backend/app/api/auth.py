@@ -10,21 +10,28 @@ from app.api.deps import get_current_user
 from datetime import datetime, timedelta, timezone
 import random
 import string
+import logging
+import asyncio
 from app.services.document_service import get_user_storage_usage_mb
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
 @router.post("/signup")
 async def signup(user_in: UserCreate, db = Depends(get_db)):
+    email = user_in.email.lower().strip()
+    logger.info(f"[Auth API] /signup entry: email='{email}', name='{user_in.full_name}'")
     try:
-        email = user_in.email.lower().strip()
         # Check if user already exists in Firestore
         user_data = db.get_user_by_email(email)
         if user_data:
             if user_data.get("is_verified"):
+                logger.warning(f"[Auth API] /signup conflict: User with email '{email}' already exists and is verified.")
                 raise HTTPException(status_code=400, detail="User with this email already exists")
             # If not verified, overwrite password and full_name
+            logger.info(f"[Auth API] /signup: Existing unverified user '{email}' found. Overwriting name and password.")
             db.update_user(user_data["id"], {
                 "full_name": user_in.full_name,
                 "hashed_password": get_password_hash(user_in.password),
@@ -33,6 +40,7 @@ async def signup(user_in: UserCreate, db = Depends(get_db)):
             user_id = user_data["id"]
         else:
             # Create user in Firebase / Firestore
+            logger.info(f"[Auth API] /signup: Creating new unverified user '{email}' in database.")
             user_data = db.create_user(
                 email=email,
                 password_hash=get_password_hash(user_in.password),
@@ -45,25 +53,46 @@ async def signup(user_in: UserCreate, db = Depends(get_db)):
         # Generate random 6-digit OTP
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        logger.info(f"[Auth API] /signup: Generated OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
         
-        db.save_otp(
+        logger.info(f"[Auth API] /signup: Saving OTP to database for '{email}'...")
+        saved = db.save_otp(
             email=email,
             otp_code=otp_code,
             expires_at=expires_at,
             purpose="registration"
         )
+        if not saved:
+            logger.error(f"[Auth API] /signup database save failure: db.save_otp returned False for '{email}'")
+            raise HTTPException(status_code=500, detail="Failed to save registration verification code to database.")
+        logger.info(f"[Auth API] /signup: Successfully saved OTP to database for '{email}'")
         
-        # Send OTP via email
-        email_sent = email_service.send_otp_email(email, otp_code)
+        # Send OTP via email using asyncio.to_thread to prevent blocking the event loop
+        logger.info(f"[Auth API] /signup: Dispatching email_service.send_otp_email via thread pool to '{email}'...")
+        email_sent = await asyncio.to_thread(email_service.send_otp_email, email, otp_code)
         if not email_sent:
-            raise Exception("Failed to send email via SMTP")
+            raise Exception("Failed to send email via SMTP (email_sent returned False)")
         
+        logger.info(f"[Auth API] /signup exit: Verification OTP successfully sent to '{email}'")
         return {"success": True, "message": "OTP sent to your email. Please verify to complete registration."}
-    except HTTPException:
-        raise
+    except HTTPException as he:
+        logger.error(f"[Auth API] /signup HTTP Exception: {he.status_code} - {he.detail}")
+        raise he
+    except TimeoutError as te:
+        logger.error(f"[Auth API] /signup SMTP Connection Timeout: {te}")
+        raise HTTPException(
+            status_code=504, 
+            detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
+        )
+    except RuntimeError as re:
+        logger.error(f"[Auth API] /signup SMTP Service Runtime Error: {re}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Email service error: {str(re)}"
+        )
     except Exception as e:
-        print(f"Signup error: {e}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        logger.error(f"[Auth API] /signup Unexpected registration error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error during registration: {str(e)}")
 
 
 @router.post("/login", response_model=Token)
@@ -204,120 +233,178 @@ async def verify_otp(data: OTPVerify, db = Depends(get_db)):
 
 @router.post("/send-otp")
 async def send_otp(data: SendOTP, db = Depends(get_db)):
+    email = data.email.lower().strip()
+    logger.info(f"[Auth API] /send-otp entry: email='{email}'")
     try:
-        email = data.email.lower().strip()
         user_data = db.get_user_by_email(email)
         if not user_data:
+            logger.warning(f"[Auth API] /send-otp user not found: '{email}'")
             raise HTTPException(status_code=404, detail="User not found")
             
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        logger.info(f"[Auth API] /send-otp: Generated OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
         
-        db.save_otp(
+        logger.info(f"[Auth API] /send-otp: Saving OTP to database for '{email}'...")
+        saved = db.save_otp(
             email=email,
             otp_code=otp_code,
             expires_at=expires_at,
             purpose="registration"
         )
+        if not saved:
+            logger.error(f"[Auth API] /send-otp database save failure: db.save_otp returned False for '{email}'")
+            raise HTTPException(status_code=500, detail="Failed to save verification code to database.")
+        logger.info(f"[Auth API] /send-otp: Successfully saved OTP to database for '{email}'")
         
-        email_sent = email_service.send_otp_email(email, otp_code)
+        logger.info(f"[Auth API] /send-otp: Dispatching email_service.send_otp_email via thread pool to '{email}'...")
+        email_sent = await asyncio.to_thread(email_service.send_otp_email, email, otp_code)
         if not email_sent:
-            raise Exception("Failed to send email via SMTP")
+            raise Exception("Failed to send email via SMTP (email_sent returned False)")
             
+        logger.info(f"[Auth API] /send-otp exit: OTP successfully resent to '{email}'")
         return {"success": True, "message": "OTP resent successfully"}
-    except HTTPException:
-        raise
+    except HTTPException as he:
+        logger.error(f"[Auth API] /send-otp HTTP Exception: {he.status_code} - {he.detail}")
+        raise he
+    except TimeoutError as te:
+        logger.error(f"[Auth API] /send-otp SMTP Connection Timeout: {te}")
+        raise HTTPException(
+            status_code=504, 
+            detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
+        )
+    except RuntimeError as re:
+        logger.error(f"[Auth API] /send-otp SMTP Service Runtime Error: {re}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Email service error: {str(re)}"
+        )
     except Exception as e:
-        print(f"Send OTP error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error while resending OTP")
+        logger.error(f"[Auth API] /send-otp Unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error while resending OTP: {str(e)}")
 
 
 @router.post("/send-reset-otp")
 async def send_reset_otp(data: ForgotPassword, db = Depends(get_db)):
+    email = data.email.lower().strip()
+    logger.info(f"[Auth API] /send-reset-otp entry: email='{email}'")
     try:
-        email = data.email.lower().strip()
         user_data = db.get_user_by_email(email)
         if not user_data:
+            logger.warning(f"[Auth API] /send-reset-otp: No account found with email '{email}'")
             raise HTTPException(status_code=404, detail="No account found with this email address.")
         
         # Generate OTP
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        logger.info(f"[Auth API] /send-reset-otp: Generated Reset OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
         
-        db.save_otp(
+        logger.info(f"[Auth API] /send-reset-otp: Saving OTP to database for '{email}'...")
+        saved = db.save_otp(
             email=email,
             otp_code=otp_code,
             expires_at=expires_at,
             purpose="password_reset"
         )
+        if not saved:
+            logger.error(f"[Auth API] /send-reset-otp database save failure: db.save_otp returned False for '{email}'")
+            raise HTTPException(status_code=500, detail="Failed to save password reset code to database.")
+        logger.info(f"[Auth API] /send-reset-otp: Successfully saved OTP to database for '{email}'")
         
-        email_sent = email_service.send_password_reset_email(email, otp_code)
+        logger.info(f"[Auth API] /send-reset-otp: Dispatching email_service.send_password_reset_email via thread pool to '{email}'...")
+        email_sent = await asyncio.to_thread(email_service.send_password_reset_email, email, otp_code)
         if not email_sent:
-            raise Exception("Failed to send reset email")
+            raise Exception("Failed to send reset email via SMTP (email_sent returned False)")
             
+        logger.info(f"[Auth API] /send-reset-otp exit: Reset verification code successfully sent to '{email}'")
         return {"success": True, "message": "Verification code sent to your email."}
-    except HTTPException:
-        raise
+    except HTTPException as he:
+        logger.error(f"[Auth API] /send-reset-otp HTTP Exception: {he.status_code} - {he.detail}")
+        raise he
+    except TimeoutError as te:
+        logger.error(f"[Auth API] /send-reset-otp SMTP Connection Timeout: {te}")
+        raise HTTPException(
+            status_code=504, 
+            detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
+        )
+    except RuntimeError as re:
+        logger.error(f"[Auth API] /send-reset-otp SMTP Service Runtime Error: {re}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Email service error: {str(re)}"
+        )
     except Exception as e:
-        print(f"ERROR: send-reset-otp failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"[Auth API] /send-reset-otp Unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error while sending reset OTP: {str(e)}")
 
 
 @router.post("/verify-reset-otp")
 async def verify_reset_otp(data: OTPVerify, db = Depends(get_db)):
+    email = data.email.lower().strip()
+    logger.info(f"[Auth API] /verify-reset-otp entry: email='{email}', otp='{data.otp}'")
     try:
-        email = data.email.lower().strip()
         user_data = db.get_user_by_email(email)
         if not user_data:
+            logger.warning(f"[Auth API] /verify-reset-otp user not found: '{email}'")
             raise HTTPException(status_code=404, detail="User not found")
             
         otp_record = db.get_otp(email)
         if not otp_record or otp_record.get("otp_code") != data.otp or otp_record.get("purpose") != "password_reset":
+            logger.warning(f"[Auth API] /verify-reset-otp validation failure: invalid OTP/purpose for '{email}'")
             raise HTTPException(status_code=400, detail="Invalid OTP")
             
         expires_at_str = otp_record.get("expires_at")
         expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
         if not expires_at or expires_at < datetime.now(timezone.utc):
+            logger.warning(f"[Auth API] /verify-reset-otp validation failure: expired OTP for '{email}'")
             raise HTTPException(status_code=400, detail="Expired OTP")
         
+        logger.info(f"[Auth API] /verify-reset-otp exit: OTP successfully verified for '{email}'")
         # Do NOT clear OTP yet, they need it for the final reset-password step!
         return {"success": True, "message": "Code verified successfully.", "email": email, "otp": data.otp}
-    except HTTPException:
-        raise
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"Verify reset OTP Error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"[Auth API] /verify-reset-otp Unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error during verification: {str(e)}")
 
 
 @router.post("/reset-password")
 async def reset_password(data: ResetPassword, db = Depends(get_db)):
+    email = data.email.lower().strip()
+    logger.info(f"[Auth API] /reset-password entry: email='{email}'")
     try:
-        email = data.email.lower().strip()
         user_data = db.get_user_by_email(email)
         if not user_data:
+            logger.warning(f"[Auth API] /reset-password user not found: '{email}'")
             raise HTTPException(status_code=404, detail="User not found.")
             
         otp_record = db.get_otp(email)
         # Re-verify the OTP one last time
         if not otp_record or otp_record.get("otp_code") != data.otp or otp_record.get("purpose") != "password_reset":
+            logger.warning(f"[Auth API] /reset-password validation failure: invalid or expired OTP for '{email}'")
             raise HTTPException(status_code=400, detail="Verification expired or invalid. Please request a new code.")
             
         expires_at_str = otp_record.get("expires_at")
         expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
         if not expires_at or expires_at < datetime.now(timezone.utc):
+            logger.warning(f"[Auth API] /reset-password validation failure: expired OTP for '{email}'")
             raise HTTPException(status_code=400, detail="OTP Expired")
         
         # Update Password and delete OTP
         new_hash = get_password_hash(data.new_password)
+        logger.info(f"[Auth API] /reset-password: Updating password in database for user id '{user_data['id']}'...")
         db.update_user_password(user_data["id"], new_hash)
+        logger.info(f"[Auth API] /reset-password: Deleting OTP verification record for '{email}'...")
         db.delete_otp_record(email)
         
+        logger.info(f"[Auth API] /reset-password exit: Password successfully updated for '{email}'")
         return {"success": True, "message": "Password updated successfully. You can now sign in."}
-    except HTTPException:
-        raise
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        print(f"ERROR: reset-password failed: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"[Auth API] /reset-password Unexpected error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error during password reset: {str(e)}")
 
 
 @router.post("/change-password")

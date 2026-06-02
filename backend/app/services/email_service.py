@@ -1,11 +1,16 @@
 import smtplib
+import logging
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 class EmailService:
     @staticmethod
-    def send_otp_email(email: str, otp_code: str):
+    def send_otp_email(email: str, otp_code: str) -> bool:
+        logger.info(f"[Email Service] Beginning OTP email generation for recipient: {email}")
         subject = f"{otp_code} is your LexGuard AI verification code"
         
         # Professional HTML Template
@@ -43,28 +48,46 @@ class EmailService:
         message.attach(part1)
         message.attach(part2)
 
+        port = int(settings.SMTP_PORT)
+        logger.info(f"[Email Service] SMTP send initiated. Host: {settings.SMTP_SERVER}, Port: {port}, Sender: {settings.SMTP_EMAIL}, Recipient: {email}")
+
         try:
             # Use SSL for port 465, TLS for others (like 587)
-            if int(settings.SMTP_PORT) == 465:
-                server = smtplib.SMTP_SSL(settings.SMTP_SERVER, int(settings.SMTP_PORT), timeout=10)
+            if port == 465:
+                logger.info("[Email Service] Connecting via SMTP_SSL (Port 465)...")
+                server = smtplib.SMTP_SSL(settings.SMTP_SERVER, port, timeout=10)
             else:
-                server = smtplib.SMTP(settings.SMTP_SERVER, int(settings.SMTP_PORT), timeout=10)
+                logger.info(f"[Email Service] Connecting via SMTP (Port {port})...")
+                server = smtplib.SMTP(settings.SMTP_SERVER, port, timeout=10)
+                logger.info("[Email Service] Upgrading connection with starttls...")
+                server.ehlo()
                 server.starttls()
+                server.ehlo()
             
             with server:
+                logger.info("[Email Service] Connected to SMTP server. Attempting login...")
                 server.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
+                logger.info("[Email Service] Login successful. Sending mail message...")
                 server.sendmail(settings.SMTP_EMAIL, email, message.as_string())
-            print(f"OTP Email sent successfully to {email}")
+            
+            logger.info(f"[Email Service] OTP email successfully sent to {email}")
             return True
-        except smtplib.SMTPAuthenticationError:
-            print(f"SMTP Authentication Error: Please check your App Password.")
-            return False
+        except smtplib.SMTPAuthenticationError as auth_err:
+            error_msg = "SMTP Authentication Error: The email provider rejected login. Please check SMTP_EMAIL and SMTP_PASSWORD (App Password)."
+            logger.error(f"[Email Service] {error_msg} Details: {auth_err}")
+            raise RuntimeError(error_msg) from auth_err
+        except (socket.timeout, TimeoutError) as timeout_err:
+            error_msg = f"SMTP Connection Timeout: Failed to connect to {settings.SMTP_SERVER}:{port} within 10 seconds. Note: Render Free tier blocks outbound SMTP ports (25, 465, 587)."
+            logger.error(f"[Email Service] {error_msg} Details: {timeout_err}")
+            raise TimeoutError(error_msg) from timeout_err
         except Exception as e:
-            print(f"Error sending email to {email}: {e}")
-            return False
+            error_msg = f"SMTP Error sending email: {type(e).__name__}: {str(e)}"
+            logger.error(f"[Email Service] {error_msg}")
+            raise RuntimeError(error_msg) from e
 
     @staticmethod
-    def send_password_reset_email(email: str, otp_code: str):
+    def send_password_reset_email(email: str, otp_code: str) -> bool:
+        logger.info(f"[Email Service] Beginning Password Reset email generation for recipient: {email}")
         subject = "LexGuard AI Password Reset OTP"
         
         html_content = f"""
@@ -105,19 +128,40 @@ class EmailService:
         message.attach(part1)
         message.attach(part2)
 
+        port = int(settings.SMTP_PORT)
+        logger.info(f"[Email Service] SMTP send initiated for password reset. Host: {settings.SMTP_SERVER}, Port: {port}, Sender: {settings.SMTP_EMAIL}, Recipient: {email}")
+
         try:
-            if int(settings.SMTP_PORT) == 465:
-                server = smtplib.SMTP_SSL(settings.SMTP_SERVER, int(settings.SMTP_PORT), timeout=10)
+            if port == 465:
+                logger.info("[Email Service] Connecting via SMTP_SSL (Port 465)...")
+                server = smtplib.SMTP_SSL(settings.SMTP_SERVER, port, timeout=10)
             else:
-                server = smtplib.SMTP(settings.SMTP_SERVER, int(settings.SMTP_PORT), timeout=10)
+                logger.info(f"[Email Service] Connecting via SMTP (Port {port})...")
+                server = smtplib.SMTP(settings.SMTP_SERVER, port, timeout=10)
+                logger.info("[Email Service] Upgrading connection with starttls...")
+                server.ehlo()
                 server.starttls()
+                server.ehlo()
             
             with server:
+                logger.info("[Email Service] Connected to SMTP server. Attempting login...")
                 server.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
+                logger.info("[Email Service] Login successful. Sending mail message...")
                 server.sendmail(settings.SMTP_EMAIL, email, message.as_string())
+            
+            logger.info(f"[Email Service] Password Reset email successfully sent to {email}")
             return True
+        except smtplib.SMTPAuthenticationError as auth_err:
+            error_msg = "SMTP Authentication Error: The email provider rejected login. Please check SMTP_EMAIL and SMTP_PASSWORD (App Password)."
+            logger.error(f"[Email Service] {error_msg} Details: {auth_err}")
+            raise RuntimeError(error_msg) from auth_err
+        except (socket.timeout, TimeoutError) as timeout_err:
+            error_msg = f"SMTP Connection Timeout: Failed to connect to {settings.SMTP_SERVER}:{port} within 10 seconds. Note: Render Free tier blocks outbound SMTP ports (25, 465, 587)."
+            logger.error(f"[Email Service] {error_msg} Details: {timeout_err}")
+            raise TimeoutError(error_msg) from timeout_err
         except Exception as e:
-            print(f"SMTP Error: {e}")
-            return False
+            error_msg = f"SMTP Error sending email: {type(e).__name__}: {str(e)}"
+            logger.error(f"[Email Service] {error_msg}")
+            raise RuntimeError(error_msg) from e
 
 email_service = EmailService()

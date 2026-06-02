@@ -12,7 +12,7 @@ from app.models.user import User
 from app.models.document import Document
 from app.api.deps import get_current_user
 from app.core.config import settings
-from app.services.document_service import extract_text, get_file_extension, validate_file, get_user_storage_usage_mb
+from app.services.document_service import extract_text, get_file_extension, validate_file, get_user_storage_usage_mb, get_supabase
 from app.services.groq_service import groq_service
 
 router = APIRouter()
@@ -42,8 +42,7 @@ async def run_ai_analysis(document_id: str):
             os.makedirs(local_dir, exist_ok=True)
             # Find the storage path (e.g. users/{user_id}/documents/{document_id}.{extension})
             storage_path = f"users/{doc.user_id}/documents/{document_id}.{doc.type}"
-            from supabase import create_client, Client
-            supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+            supabase = get_supabase()
             try:
                 res = supabase.storage.from_("legal-documents").download(storage_path)
                 with open(local_path, "wb") as f:
@@ -126,10 +125,10 @@ async def run_ai_analysis(document_id: str):
             
         # Save to Supabase PostgreSQL database
         try:
-            import psycopg2
             import json
-            conn = psycopg2.connect(settings.DATABASE_URL)
-            cur = conn.cursor()
+            conn = db._get_pg_conn()
+            if conn:
+                cur = conn.cursor()
             
             # 1. Update documents table
             cur.execute("""
@@ -209,13 +208,13 @@ async def run_ai_analysis(document_id: str):
             db.update_document(document_id, {"status": "failed"})
             
             # Update failed status in PostgreSQL
-            import psycopg2
-            conn = psycopg2.connect(settings.DATABASE_URL)
-            cur = conn.cursor()
-            cur.execute("UPDATE documents SET status = 'failed' WHERE id = %s", (document_id,))
-            conn.commit()
-            cur.close()
-            conn.close()
+            conn = db._get_pg_conn()
+            if conn:
+                cur = conn.cursor()
+                cur.execute("UPDATE documents SET status = 'failed' WHERE id = %s", (document_id,))
+                conn.commit()
+                cur.close()
+                conn.close()
         except Exception as pg_err:
             print(f"Failed to update failed status in PostgreSQL: {pg_err}")
 
@@ -253,10 +252,8 @@ async def upload_document(
     # Upload to Supabase Storage Bucket: 'legal-documents'
     remote_path = f"users/{current_user.id}/documents/{doc_id}.{file_ext}"
     mime_type, _ = mimetypes.guess_type(file.filename)
-    
-    from supabase import create_client, Client
-    supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-    
+
+    supabase = get_supabase()
     try:
         with open(file_path, "rb") as f:
             supabase.storage.from_("legal-documents").upload(
@@ -271,17 +268,19 @@ async def upload_document(
         
     # Store file URL in PostgreSQL
     try:
-        import psycopg2
-        conn = psycopg2.connect(settings.DATABASE_URL)
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO documents (id, user_id, name, path, type, size_in_mb, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (doc_id, current_user.id, file.filename, download_url, file_ext, size_mb, "pending"))
-        conn.commit()
-        cur.close()
-        conn.close()
-        print(f"Successfully inserted document {doc_id} into PostgreSQL")
+        conn = db._get_pg_conn()
+        if conn:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO documents (id, user_id, name, path, type, size_in_mb, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (doc_id, current_user.id, file.filename, download_url, file_ext, size_mb, "pending"))
+            conn.commit()
+            cur.close()
+            conn.close()
+            print(f"Successfully inserted document {doc_id} into PostgreSQL")
+        else:
+            print("Failed to get Postgres connection in upload_document")
     except Exception as e:
         print(f"Failed to save document to PostgreSQL: {e}")
     
@@ -373,8 +372,7 @@ async def download_document(
         local_path = os.path.join(local_dir, f"{document_id}.{doc_data.get('type')}")
         os.makedirs(local_dir, exist_ok=True)
         storage_path = f"users/{current_user.id}/documents/{document_id}.{doc_data.get('type')}"
-        from supabase import create_client, Client
-        supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        supabase = get_supabase()
         try:
             res = supabase.storage.from_("legal-documents").download(storage_path)
             with open(local_path, "wb") as f:

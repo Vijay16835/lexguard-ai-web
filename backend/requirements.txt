@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
-sqlalchemy
 firebase-admin
 pydantic[email]
 pydantic-settings

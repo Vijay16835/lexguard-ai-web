@@ -122,7 +122,7 @@ class _UploadScreenState extends State<UploadScreen> {
                   borderRadius: BorderRadius.circular(20),
                   border: Border.all(
                     color: _selectedFile != null
-                        ? AppColors.gold.withOpacity(0.5)
+                        ? AppColors.gold.withValues(alpha: 0.5)
                         : AppColors.border,
                     width: 2,
                     strokeAlign: BorderSide.strokeAlignInside,
@@ -282,7 +282,7 @@ class _UploadScreenState extends State<UploadScreen> {
                     : _uploadFile,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.gold,
-                  disabledBackgroundColor: AppColors.gold.withOpacity(0.3),
+                  disabledBackgroundColor: AppColors.gold.withValues(alpha: 0.3),
                   foregroundColor: AppColors.navy,
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16)),

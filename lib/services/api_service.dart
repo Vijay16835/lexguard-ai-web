@@ -1,7 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:pretty_dio_logger/pretty_dio_logger.dart';
 import 'package:lexguard_ai/core/constants/api_constants.dart';
 
 class ApiService {
@@ -44,17 +43,6 @@ class ApiService {
         },
       ),
     );
-
-    if (kDebugMode) {
-      _dio.interceptors.add(PrettyDioLogger(
-        requestHeader: true,
-        requestBody: true,
-        responseHeader: false,
-        responseBody: true,
-        error: true,
-        compact: true,
-      ));
-    }
 
     // ── Retry on transient network errors ─────────────────────────────────
     _dio.interceptors.add(

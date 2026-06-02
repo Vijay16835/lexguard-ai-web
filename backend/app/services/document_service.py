@@ -4,6 +4,21 @@ Handles text extraction from PDF, DOCX, TXT, and images.
 """
 import os
 import traceback
+from typing import Optional
+
+# ---------------------------------------------------------------------------
+# Supabase singleton — created once at module load, reused on every request.
+# ---------------------------------------------------------------------------
+_supabase_client = None
+
+def get_supabase():
+    """Return the shared Supabase client, initialising it on first call."""
+    global _supabase_client
+    if _supabase_client is None:
+        from supabase import create_client
+        from app.core.config import settings
+        _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+    return _supabase_client
 
 
 def extract_text_from_pdf(file_path: str) -> str:
@@ -159,10 +174,7 @@ def validate_file(filename: str, file_size: int) -> tuple:
 def get_user_storage_usage_mb(user_id: str) -> float:
     """Calculate the total storage used by a user in MB directly from Supabase Storage."""
     try:
-        from app.core.config import settings
-        from supabase import create_client, Client
-        supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-        
+        supabase = get_supabase()
         files = supabase.storage.from_("legal-documents").list(f"users/{user_id}/documents")
         total_size_bytes = sum(f.get('metadata', {}).get('size', 0) for f in files if f.get('metadata')) if files else 0
         return total_size_bytes / (1024 * 1024)

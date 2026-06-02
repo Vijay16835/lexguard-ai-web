@@ -8,8 +8,6 @@ import 'package:lexguard_ai/features/auth/providers/auth_provider.dart';
 import 'package:lexguard_ai/widgets/common/custom_text_field.dart';
 import 'package:lexguard_ai/widgets/common/loading_overlay.dart';
 
-import 'package:lexguard_ai/features/auth/screens/otp_verification_screen.dart';
-
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
