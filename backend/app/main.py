@@ -7,6 +7,7 @@ from app.db.session import Base
 from app import models
 
 # Configure logger
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Database tables creation is handled by Firestore dynamically

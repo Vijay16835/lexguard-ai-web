@@ -287,19 +287,20 @@ async def send_otp(data: SendOTP, db = Depends(get_db)):
 @router.post("/send-reset-otp")
 async def send_reset_otp(data: ForgotPassword, db = Depends(get_db)):
     email = data.email.lower().strip()
-    logger.info(f"[Auth API] /send-reset-otp entry: email='{email}'")
+    logger.info(f"[SEND_RESET_OTP] Request received")
     try:
         user_data = db.get_user_by_email(email)
         if not user_data:
-            logger.warning(f"[Auth API] /send-reset-otp: No account found with email '{email}'")
+            logger.warning(f"[SEND_RESET_OTP] Email validation failed: No account found with email '{email}'")
             raise HTTPException(status_code=404, detail="No account found with this email address.")
+        
+        logger.info(f"[SEND_RESET_OTP] Email validated")
         
         # Generate OTP
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-        logger.info(f"[Auth API] /send-reset-otp: Generated Reset OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
+        logger.info(f"[SEND_RESET_OTP] OTP generated")
         
-        logger.info(f"[Auth API] /send-reset-otp: Saving OTP to database for '{email}'...")
         saved = db.save_otp(
             email=email,
             otp_code=otp_code,
@@ -307,34 +308,34 @@ async def send_reset_otp(data: ForgotPassword, db = Depends(get_db)):
             purpose="password_reset"
         )
         if not saved:
-            logger.error(f"[Auth API] /send-reset-otp database save failure: db.save_otp returned False for '{email}'")
+            logger.error(f"[SEND_RESET_OTP] Database save failure: db.save_otp returned False for '{email}'")
             raise HTTPException(status_code=500, detail="Failed to save password reset code to database.")
-        logger.info(f"[Auth API] /send-reset-otp: Successfully saved OTP to database for '{email}'")
         
-        logger.info(f"[Auth API] /send-reset-otp: Dispatching email_service.send_password_reset_email via thread pool to '{email}'...")
+        logger.info(f"[SEND_RESET_OTP] Email sending started")
         email_sent = await asyncio.to_thread(email_service.send_password_reset_email, email, otp_code)
         if not email_sent:
-            raise Exception("Failed to send reset email via SMTP (email_sent returned False)")
+            raise Exception("Failed to send reset email (email_sent returned False)")
             
-        logger.info(f"[Auth API] /send-reset-otp exit: Reset verification code successfully sent to '{email}'")
+        logger.info(f"[SEND_RESET_OTP] Email sent successfully")
+        logger.info(f"[SEND_RESET_OTP] Response returned")
         return {"success": True, "message": "Verification code sent to your email."}
     except HTTPException as he:
-        logger.error(f"[Auth API] /send-reset-otp HTTP Exception: {he.status_code} - {he.detail}")
+        logger.error(f"[SEND_RESET_OTP] HTTP Exception: {he.status_code} - {he.detail}")
         raise he
     except TimeoutError as te:
-        logger.error(f"[Auth API] /send-reset-otp SMTP Connection Timeout: {te}")
+        logger.error(f"[SEND_RESET_OTP] Exact exception: {te}")
         raise HTTPException(
             status_code=400, 
             detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
         )
     except RuntimeError as re:
-        logger.error(f"[Auth API] /send-reset-otp SMTP Service Runtime Error: {re}")
+        logger.error(f"[SEND_RESET_OTP] Exact exception: {re}")
         raise HTTPException(
             status_code=400,
             detail=f"Email service error: {str(re)}"
         )
     except Exception as e:
-        logger.error(f"[Auth API] /send-reset-otp Unexpected error: {e}", exc_info=True)
+        logger.error(f"[SEND_RESET_OTP] Exact exception: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error while sending reset OTP: {str(e)}")
 
 

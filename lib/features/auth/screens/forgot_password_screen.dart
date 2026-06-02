@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -18,21 +19,92 @@ class ForgotPasswordScreen extends StatefulWidget {
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final _emailCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  bool _isLoading = false;
 
   Future<void> _sendReset() async {
     if (!_formKey.currentState!.validate()) return;
-    final auth = context.read<AuthProvider>();
-    final success = await auth.sendResetOtp(_emailCtrl.text.trim());
-    if (success && mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => OtpVerificationScreen(
-            email: _emailCtrl.text.trim(),
-            isPasswordReset: true,
-          ),
-        ),
+    
+    debugPrint('[FORGOT_PASSWORD] Button clicked');
+    setState(() {
+      _isLoading = true;
+    });
+
+    final email = _emailCtrl.text.trim();
+    debugPrint('[FORGOT_PASSWORD] Request started');
+    
+    try {
+      final auth = context.read<AuthProvider>();
+      
+      // Perform authentication check with 30s maximum timeout
+      final success = await auth.sendResetOtp(email).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          debugPrint('[FORGOT_PASSWORD] Timeout exceeded');
+          throw TimeoutException('Connection timed out. The server is taking too long to respond.');
+        },
       );
+      
+      debugPrint('[FORGOT_PASSWORD] Response received');
+
+      if (success) {
+        debugPrint('[FORGOT_PASSWORD] Success');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('OTP sent to your email successfully.'),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => OtpVerificationScreen(
+                email: email,
+                isPasswordReset: true,
+              ),
+            ),
+          );
+        }
+      } else {
+        debugPrint('[FORGOT_PASSWORD] Failure');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(auth.errorMessage ?? 'Failed to send OTP. Please try again.'),
+              backgroundColor: Colors.redAccent,
+              behavior: SnackBarBehavior.floating,
+              action: SnackBarAction(
+                label: 'RETRY',
+                textColor: Colors.white,
+                onPressed: _sendReset,
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('[FORGOT_PASSWORD] Exception: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            backgroundColor: Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            action: SnackBarAction(
+              label: 'RETRY',
+              textColor: Colors.white,
+              onPressed: _sendReset,
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -46,7 +118,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     return LoadingOverlay(
-      isLoading: auth.authState == AuthState.loading,
+      isLoading: _isLoading,
       child: Scaffold(
         backgroundColor: AppColors.background,
         body: Container(

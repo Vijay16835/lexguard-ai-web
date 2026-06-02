@@ -26,6 +26,12 @@ class AppConfig {
   static bool get isProduction => environment == AppFlavor.production;
 
   static String get apiBaseUrl {
+    const apiHost = String.fromEnvironment('API_HOST');
+    if (apiHost.isNotEmpty) {
+      final localUrl = 'http://$apiHost:8000/api/v1';
+      debugPrint('[AppConfig] apiBaseUrl (from API_HOST) -> $localUrl');
+      return localUrl;
+    }
     debugPrint('[AppConfig] apiBaseUrl -> $_kRenderBaseUrl');
     return _kRenderBaseUrl;
   }
