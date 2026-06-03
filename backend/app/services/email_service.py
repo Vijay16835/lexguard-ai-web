@@ -94,22 +94,38 @@ class EmailService:
                         logger.info("[Email Service] Upgrading SMTP connection with STARTTLS...")
                         server.starttls()
                         server.ehlo()
+                    
+                    logger.info("SMTP connected")
+                    logger.info(f"Log SMTP connection status: Connected to {settings.SMTP_SERVER}:{port}")
                         
                     with server:
                         logger.info("[Email Service] SMTP connection established. Logging in...")
-                        server.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
-                        logger.info("[Email Service] SMTP authentication successful. Dispatching email...")
+                        login_res = server.login(settings.SMTP_EMAIL, settings.SMTP_PASSWORD)
+                        logger.info("SMTP authenticated")
+                        logger.info(f"Log SMTP authentication result: {login_res}")
+                        
+                        from_email = settings.EMAIL_FROM or settings.SMTP_EMAIL
+                        logger.info(f"Log sender email used: {from_email}")
+                        logger.info(f"Log recipient email used: {email}")
                         
                         message = MIMEMultipart("alternative")
                         message["Subject"] = subject
-                        message["From"] = settings.SMTP_EMAIL
+                        message["From"] = from_email
                         message["To"] = email
+                        
+                        from email.utils import make_msgid
+                        msg_id = make_msgid(domain=settings.SMTP_SERVER.split(".")[-2] + "." + settings.SMTP_SERVER.split(".")[-1] if "." in settings.SMTP_SERVER else "lexguard-ai.com")
+                        message["Message-ID"] = msg_id
                         
                         message.attach(MIMEText(text_content, "plain"))
                         message.attach(MIMEText(html_content, "html"))
                         
-                        server.sendmail(settings.SMTP_EMAIL, email, message.as_string())
-                        logger.info(f"[Email Service] Email successfully sent to '{email}' via SMTP.")
+                        sendmail_response = server.sendmail(from_email, email, message.as_string())
+                        logger.info("Email dispatched")
+                        logger.info(f"Log SMTP server response: {sendmail_response}")
+                        logger.info(f"Provider response: {sendmail_response}")
+                        logger.info(f"Log message-id returned by provider: {msg_id}")
+                        logger.info(f"Log final delivery status: Email accepted for delivery (empty result indicates success: {sendmail_response})")
                         return True
                         
                 elif provider == "resend":
@@ -117,11 +133,12 @@ class EmailService:
                     if not api_key:
                         raise ValueError("Resend API key (RESEND_API_KEY) is not configured.")
                     
-                    from_email = settings.SMTP_EMAIL
+                    from_email = settings.EMAIL_FROM or settings.SMTP_EMAIL
                     if not from_email or "gmail.com" in from_email or "your_smtp" in from_email:
                         from_email = "onboarding@resend.dev"
                         
-                    logger.info(f"[Email Service] Attempt {attempt}/{max_attempts}: Sending via Resend API. Sender: {from_email}")
+                    logger.info(f"Log sender email used: {from_email}")
+                    logger.info(f"Log recipient email used: {email}")
                     
                     headers = {
                         "Authorization": f"Bearer {api_key}",
@@ -138,7 +155,13 @@ class EmailService:
                     with httpx.Client(timeout=10.0) as client:
                         response = client.post("https://api.resend.com/emails", json=payload, headers=headers)
                         response.raise_for_status()
-                        logger.info(f"[Email Service] Email successfully sent to '{email}' via Resend REST API.")
+                        res_json = response.json()
+                        msg_id = res_json.get("id")
+                        
+                        logger.info("Email dispatched")
+                        logger.info(f"Provider response: {res_json}")
+                        logger.info(f"Log message-id returned by provider: {msg_id}")
+                        logger.info(f"Log final delivery status: Sent via Resend API")
                         return True
                         
                 elif provider == "sendgrid":
@@ -146,11 +169,12 @@ class EmailService:
                     if not api_key:
                         raise ValueError("SendGrid API key (SENDGRID_API_KEY) is not configured.")
                         
-                    from_email = settings.SMTP_EMAIL
+                    from_email = settings.EMAIL_FROM or settings.SMTP_EMAIL
                     if not from_email or "your_smtp" in from_email:
                         from_email = "onboarding@resend.dev"
                         
-                    logger.info(f"[Email Service] Attempt {attempt}/{max_attempts}: Sending via SendGrid API. Sender: {from_email}")
+                    logger.info(f"Log sender email used: {from_email}")
+                    logger.info(f"Log recipient email used: {email}")
                     
                     headers = {
                         "Authorization": f"Bearer {api_key}",
@@ -168,7 +192,12 @@ class EmailService:
                     with httpx.Client(timeout=10.0) as client:
                         response = client.post("https://api.sendgrid.com/v3/mail/send", json=payload, headers=headers)
                         response.raise_for_status()
-                        logger.info(f"[Email Service] Email successfully sent to '{email}' via SendGrid REST API.")
+                        msg_id = response.headers.get("X-Message-Id")
+                        
+                        logger.info("Email dispatched")
+                        logger.info(f"Provider response: {response.status_code}")
+                        logger.info(f"Log message-id returned by provider: {msg_id}")
+                        logger.info(f"Log final delivery status: Sent via SendGrid API")
                         return True
                         
                 elif provider == "mailgun":
@@ -178,11 +207,12 @@ class EmailService:
                     if not api_key or not domain:
                         raise ValueError("Mailgun configuration is incomplete (MAILGUN_API_KEY or MAILGUN_DOMAIN is missing).")
                         
-                    from_email = settings.SMTP_EMAIL
+                    from_email = settings.EMAIL_FROM or settings.SMTP_EMAIL
                     if not from_email or "your_smtp" in from_email:
                         from_email = f"postmaster@{domain}"
                         
-                    logger.info(f"[Email Service] Attempt {attempt}/{max_attempts}: Sending via Mailgun API. Sender: {from_email}")
+                    logger.info(f"Log sender email used: {from_email}")
+                    logger.info(f"Log recipient email used: {email}")
                     
                     url = f"{api_url.rstrip('/')}/{domain}/messages"
                     data = {
@@ -196,12 +226,19 @@ class EmailService:
                     with httpx.Client(timeout=10.0) as client:
                         response = client.post(url, data=data, auth=("api", api_key))
                         response.raise_for_status()
-                        logger.info(f"[Email Service] Email successfully sent to '{email}' via Mailgun REST API.")
+                        res_json = response.json()
+                        msg_id = res_json.get("id")
+                        
+                        logger.info("Email dispatched")
+                        logger.info(f"Provider response: {res_json}")
+                        logger.info(f"Log message-id returned by provider: {msg_id}")
+                        logger.info(f"Log final delivery status: Sent via Mailgun API")
                         return True
                 else:
                     raise ValueError(f"Unsupported email provider: {provider}")
                     
             except Exception as e:
+                logger.error(f"Provider error: {type(e).__name__}: {str(e)}")
                 is_transient = True
                 
                 # Check for permanent config / credential issues

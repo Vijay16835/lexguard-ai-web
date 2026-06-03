@@ -53,6 +53,7 @@ async def signup(user_in: UserCreate, db = Depends(get_db)):
         # Generate random 6-digit OTP
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        logger.info("OTP generated")
         logger.info(f"[Auth API] /signup: Generated OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
         
         logger.info(f"[Auth API] /signup: Saving OTP to database for '{email}'...")
@@ -65,6 +66,7 @@ async def signup(user_in: UserCreate, db = Depends(get_db)):
         if not saved:
             logger.error(f"[Auth API] /signup database save failure: db.save_otp returned False for '{email}'")
             raise HTTPException(status_code=500, detail="Failed to save registration verification code to database.")
+        logger.info("OTP stored")
         logger.info(f"[Auth API] /signup: Successfully saved OTP to database for '{email}'")
         
         # Send OTP via email using asyncio.to_thread to prevent blocking the event loop
@@ -243,6 +245,7 @@ async def send_otp(data: SendOTP, db = Depends(get_db)):
             
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        logger.info("OTP generated")
         logger.info(f"[Auth API] /send-otp: Generated OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
         
         logger.info(f"[Auth API] /send-otp: Saving OTP to database for '{email}'...")
@@ -255,6 +258,7 @@ async def send_otp(data: SendOTP, db = Depends(get_db)):
         if not saved:
             logger.error(f"[Auth API] /send-otp database save failure: db.save_otp returned False for '{email}'")
             raise HTTPException(status_code=500, detail="Failed to save verification code to database.")
+        logger.info("OTP stored")
         logger.info(f"[Auth API] /send-otp: Successfully saved OTP to database for '{email}'")
         
         logger.info(f"[Auth API] /send-otp: Dispatching email_service.send_otp_email via thread pool to '{email}'...")
@@ -318,6 +322,7 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
         # Generate OTP
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
+        logger.info("OTP generated")
         logger.info(f"[SEND_RESET_OTP] OTP generated")
         
         saved = db.save_otp(
@@ -329,7 +334,7 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
         if not saved:
             logger.error(f"[SEND_RESET_OTP] Database save failure: db.save_otp returned False for '{email}'")
             raise HTTPException(status_code=500, detail="Failed to save password reset code to database.")
-        
+        logger.info("OTP stored")
         logger.info(f"[SEND_RESET_OTP] Queueing email sending background task for '{email}'")
         background_tasks.add_task(send_email_in_background, email, otp_code)
         return {"success": True, "message": "Verification code sent to your email."}

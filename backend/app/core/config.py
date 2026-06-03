@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str = ""
     SMTP_SERVER: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
+    EMAIL_FROM: str = ""
     
     EMAIL_PROVIDER: str = "smtp"
     RESEND_API_KEY: str = ""
