@@ -53,12 +53,12 @@ async def test_email_endpoint(recipient: str = None):
     import socket
     
     if not recipient:
-        recipient = settings.SMTP_EMAIL
+        recipient = settings.EMAIL_FROM or settings.SMTP_EMAIL
         
     if not recipient:
         raise HTTPException(
             status_code=400,
-            detail="No recipient email provided, and SMTP_EMAIL settings key is empty."
+            detail="No recipient email provided, and EMAIL_FROM / SMTP_EMAIL settings keys are empty."
         )
         
     logger.info(f"[Debug API] test-email called. Target recipient: {recipient}")
@@ -67,16 +67,14 @@ async def test_email_endpoint(recipient: str = None):
         res = email_service.run_smtp_diagnostics(recipient)
         return res
     except Exception as e:
-        logger.error(f"[Debug API] SMTP Connection / Diagnostic Failure: {type(e).__name__}: {str(e)}", exc_info=True)
+        logger.error(f"[Debug API] Brevo REST API Connection / Diagnostic Failure: {type(e).__name__}: {str(e)}", exc_info=True)
         
         if isinstance(e, socket.gaierror):
-            detail = f"DNS failure: Could not resolve SMTP server. Details: {str(e)}"
+            detail = f"DNS failure: Could not resolve Brevo API server. Details: {str(e)}"
         elif isinstance(e, (socket.timeout, TimeoutError)):
-            detail = f"Network timeout: Connection to SMTP server timed out. Details: {str(e)}"
-        elif isinstance(e, smtplib.SMTPAuthenticationError):
-            detail = f"SMTP Authentication Failure (Code {e.smtp_code}): {e.smtp_error.decode() if isinstance(e.smtp_error, bytes) else str(e.smtp_error)}"
-        elif isinstance(e, (smtplib.SMTPSenderRefused, smtplib.SMTPRecipientsRefused, smtplib.SMTPDataError)):
-            detail = f"SMTP Rejection Failure: {str(e)}"
+            detail = f"Network timeout: Connection to Brevo API server timed out. Details: {str(e)}"
+        elif "Authentication failure" in str(e) or "unauthorized" in str(e).lower():
+            detail = f"Brevo API Authentication Failure: {str(e)}"
         else:
             detail = f"Diagnostic Failure: {type(e).__name__}: {str(e)}"
             

@@ -34,8 +34,9 @@ class Settings(BaseSettings):
     SMTP_SERVER: str = ""
     SMTP_PORT: int = 587
     EMAIL_FROM: str = ""
+    BREVO_API_KEY: str = ""
     
-    EMAIL_PROVIDER: str = "smtp"
+    EMAIL_PROVIDER: str = "brevo_api"
     RESEND_API_KEY: str = ""
     SENDGRID_API_KEY: str = ""
     MAILGUN_API_KEY: str = ""

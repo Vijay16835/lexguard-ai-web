@@ -73,7 +73,7 @@ async def signup(user_in: UserCreate, db = Depends(get_db)):
         logger.info(f"[Auth API] /signup: Dispatching email_service.send_otp_email via thread pool to '{email}'...")
         email_sent = await asyncio.to_thread(email_service.send_otp_email, email, otp_code)
         if not email_sent:
-            raise Exception("Failed to send email via SMTP (email_sent returned False)")
+            raise Exception("Failed to send email via Brevo REST API (email_sent returned False)")
         
         logger.info(f"[Auth API] /signup exit: Verification OTP successfully sent to '{email}'")
         return {"success": True, "message": "OTP sent to your email. Please verify to complete registration."}
@@ -81,16 +81,16 @@ async def signup(user_in: UserCreate, db = Depends(get_db)):
         logger.error(f"[Auth API] /signup HTTP Exception: {he.status_code} - {he.detail}")
         raise he
     except TimeoutError as te:
-        logger.error(f"[Auth API] /signup SMTP Connection Timeout: {te}")
+        logger.error(f"[Auth API] /signup Email API Timeout: {te}")
         raise HTTPException(
             status_code=400, 
-            detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
+            detail=f"Email gateway timeout: {str(te)}. The Brevo REST API did not respond within the timeout limit."
         )
     except RuntimeError as re:
-        logger.error(f"[Auth API] /signup SMTP Service Runtime Error: {re}")
+        logger.error(f"[Auth API] /signup Email API Runtime Error: {re}")
         raise HTTPException(
             status_code=400,
-            detail=f"Email service error: {str(re)}"
+            detail=f"Email service API error: {str(re)}"
         )
     except Exception as e:
         logger.error(f"[Auth API] /signup Unexpected registration error: {e}", exc_info=True)
@@ -264,7 +264,7 @@ async def send_otp(data: SendOTP, db = Depends(get_db)):
         logger.info(f"[Auth API] /send-otp: Dispatching email_service.send_otp_email via thread pool to '{email}'...")
         email_sent = await asyncio.to_thread(email_service.send_otp_email, email, otp_code)
         if not email_sent:
-            raise Exception("Failed to send email via SMTP (email_sent returned False)")
+            raise Exception("Failed to send email via Brevo REST API (email_sent returned False)")
             
         logger.info(f"[Auth API] /send-otp exit: OTP successfully resent to '{email}'")
         return {"success": True, "message": "OTP resent successfully"}
@@ -272,16 +272,16 @@ async def send_otp(data: SendOTP, db = Depends(get_db)):
         logger.error(f"[Auth API] /send-otp HTTP Exception: {he.status_code} - {he.detail}")
         raise he
     except TimeoutError as te:
-        logger.error(f"[Auth API] /send-otp SMTP Connection Timeout: {te}")
+        logger.error(f"[Auth API] /send-otp Email API Timeout: {te}")
         raise HTTPException(
             status_code=400, 
-            detail=f"Email gateway timeout: {str(te)}. This typically occurs on Render free tier deployments because outbound SMTP ports (25, 465, 587) are blocked."
+            detail=f"Email gateway timeout: {str(te)}. The Brevo REST API did not respond within the timeout limit."
         )
     except RuntimeError as re:
-        logger.error(f"[Auth API] /send-otp SMTP Service Runtime Error: {re}")
+        logger.error(f"[Auth API] /send-otp Email API Runtime Error: {re}")
         raise HTTPException(
             status_code=400,
-            detail=f"Email service error: {str(re)}"
+            detail=f"Email service API error: {str(re)}"
         )
     except Exception as e:
         logger.error(f"[Auth API] /send-otp Unexpected error: {e}", exc_info=True)
