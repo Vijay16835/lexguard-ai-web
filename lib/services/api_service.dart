@@ -10,10 +10,10 @@ class ApiService {
     _dio = Dio(
       BaseOptions(
         baseUrl: ApiConstants.baseUrl,
-        // Render free-tier cold starts can take 30–50 s — timeouts must exceed that.
-        connectTimeout: const Duration(seconds: 60),
-        receiveTimeout: const Duration(seconds: 60),
-        sendTimeout: const Duration(seconds: 60),
+        // Reduced to 30s connection timeout as per specifications
+        connectTimeout: const Duration(seconds: 30),
+        receiveTimeout: const Duration(seconds: 30),
+        sendTimeout: const Duration(seconds: 30),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
@@ -68,9 +68,42 @@ class ApiService {
     );
   }
 
+  Future<Response> _executeWithRetry(
+    Future<Response> Function() request, {
+    int maxRetries = 3,
+    Duration initialDelay = const Duration(seconds: 1),
+  }) async {
+    int attempts = 0;
+    while (true) {
+      try {
+        attempts++;
+        return await request();
+      } on DioException catch (e) {
+        // Only retry on network timeout/error or 5xx server issues
+        final isNetworkError = e.type == DioExceptionType.connectionTimeout ||
+            e.type == DioExceptionType.receiveTimeout ||
+            e.type == DioExceptionType.sendTimeout ||
+            e.type == DioExceptionType.connectionError ||
+            (e.type == DioExceptionType.unknown && e.error is! FormatException);
+
+        final isServerError = e.response != null &&
+            e.response!.statusCode != null &&
+            e.response!.statusCode! >= 500;
+
+        if (attempts >= maxRetries || (!isNetworkError && !isServerError)) {
+          rethrow;
+        }
+
+        final delay = initialDelay * (1 << (attempts - 1)); // Exponential delay: 1s, 2s, 4s...
+        debugPrint('[ApiService] Request failed. Retrying in ${delay.inSeconds}s (Attempt $attempts of $maxRetries)...');
+        await Future.delayed(delay);
+      }
+    }
+  }
+
   Future<Response> get(String path, {Map<String, dynamic>? queryParameters}) async {
     try {
-      return await _dio.get(path, queryParameters: queryParameters);
+      return await _executeWithRetry(() => _dio.get(path, queryParameters: queryParameters));
     } on DioException catch (e) {
       throw _handleError(e);
     }
@@ -78,7 +111,7 @@ class ApiService {
 
   Future<Response> post(String path, {dynamic data}) async {
     try {
-      return await _dio.post(path, data: data);
+      return await _executeWithRetry(() => _dio.post(path, data: data));
     } on DioException catch (e) {
       throw _handleError(e);
     }
@@ -86,7 +119,7 @@ class ApiService {
 
   Future<Response> put(String path, {dynamic data}) async {
     try {
-      return await _dio.put(path, data: data);
+      return await _executeWithRetry(() => _dio.put(path, data: data));
     } on DioException catch (e) {
       throw _handleError(e);
     }
@@ -94,7 +127,7 @@ class ApiService {
 
   Future<Response> delete(String path) async {
     try {
-      return await _dio.delete(path);
+      return await _executeWithRetry(() => _dio.delete(path));
     } on DioException catch (e) {
       throw _handleError(e);
     }

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:lexguard_ai/core/theme/app_colors.dart';
 import 'package:lexguard_ai/features/auth/providers/auth_provider.dart';
+import 'package:lexguard_ai/widgets/common/loading_overlay.dart';
 
 class OtpVerificationScreen extends StatefulWidget {
   final String email;
@@ -196,55 +197,58 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(color: AppColors.goldGlow, shape: BoxShape.circle),
-              child: const Icon(Icons.mark_email_read_outlined, size: 40, color: AppColors.gold),
-            ),
-            const SizedBox(height: 24),
-            Text('Verify your email', style: GoogleFonts.inter(fontSize: 24, fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
-            const SizedBox(height: 12),
-            Text('We sent a 6-digit code to ${widget.email}', textAlign: TextAlign.center, style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary)),
-            const SizedBox(height: 40),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: List.generate(6, (index) => _otpBox(index)),
-            ),
-            const SizedBox(height: 40),
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: ElevatedButton(
-                onPressed: _verifyOtp,
-                style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-                child: context.watch<AuthProvider>().authState == AuthState.loading
-                    ? const CircularProgressIndicator(color: AppColors.navy)
-                    : Text('Verify Code', style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.navy)),
+    return LoadingOverlay(
+      isLoading: context.watch<AuthProvider>().authState == AuthState.loading,
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: AppColors.goldGlow, shape: BoxShape.circle),
+                child: const Icon(Icons.mark_email_read_outlined, size: 40, color: AppColors.gold),
               ),
-            ),
-            const SizedBox(height: 24),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text("Didn't receive code? ", style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary)),
-                TextButton(
-                  onPressed: _timerSeconds == 0 ? _resendOtp : null,
-                  child: Text(
-                    _timerSeconds == 0 ? 'Resend' : 'Resend in ${_timerSeconds}s',
-                    style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: _timerSeconds == 0 ? AppColors.gold : AppColors.textHint),
-                  ),
+              const SizedBox(height: 24),
+              Text('Verify your email', style: GoogleFonts.inter(fontSize: 24, fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
+              const SizedBox(height: 12),
+              Text('We sent a 6-digit code to ${widget.email}', textAlign: TextAlign.center, style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary)),
+              const SizedBox(height: 40),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: List.generate(6, (index) => _otpBox(index)),
+              ),
+              const SizedBox(height: 40),
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                  onPressed: _verifyOtp,
+                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.gold, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+                  child: context.watch<AuthProvider>().authState == AuthState.loading
+                      ? const CircularProgressIndicator(color: AppColors.navy)
+                      : Text('Verify Code', style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.navy)),
                 ),
-              ],
-            ),
-          ],
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text("Didn't receive code? ", style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary)),
+                  TextButton(
+                    onPressed: _timerSeconds == 0 ? _resendOtp : null,
+                    child: Text(
+                      _timerSeconds == 0 ? 'Resend' : 'Resend in ${_timerSeconds}s',
+                      style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: _timerSeconds == 0 ? AppColors.gold : AppColors.textHint),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

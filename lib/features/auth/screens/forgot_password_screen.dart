@@ -117,7 +117,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthProvider>();
     return LoadingOverlay(
       isLoading: _isLoading,
       child: Scaffold(

@@ -301,26 +301,31 @@ class FirebaseService:
         }
         
         # 2.5 Dual-write to Supabase PostgreSQL
+        conn = None
         try:
             conn = self._get_pg_conn()
             if conn:
                 cur = conn.cursor()
-                cur.execute("""
-                    INSERT INTO users (id, full_name, email, hashed_password, is_verified, auth_provider)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (email) DO UPDATE SET 
-                        id = EXCLUDED.id,
-                        hashed_password = EXCLUDED.hashed_password,
-                        full_name = EXCLUDED.full_name
-                """, (user_id, full_name, email_clean, password_hash, is_verified, auth_provider))
-                conn.commit()
-                cur.close()
-                conn.close()
+                try:
+                    cur.execute("""
+                        INSERT INTO users (id, full_name, email, hashed_password, is_verified, auth_provider)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (email) DO UPDATE SET 
+                            id = EXCLUDED.id,
+                            hashed_password = EXCLUDED.hashed_password,
+                            full_name = EXCLUDED.full_name
+                    """, (user_id, full_name, email_clean, password_hash, is_verified, auth_provider))
+                    conn.commit()
+                finally:
+                    cur.close()
                 logger.info(f"Successfully dual-written user {user_id} to Supabase PostgreSQL")
             else:
                 logger.error(f"Failed to get PostgreSQL connection for dual-write user {user_id}")
         except Exception as e:
             logger.error(f"Failed to insert user {user_id} into PostgreSQL: {e}")
+        finally:
+            if conn:
+                conn.close()
             
         self.db.collection("users").document(user_id).set(user_data)
         return user_data
@@ -332,36 +337,41 @@ class FirebaseService:
             self.db.collection("users").document(user_id).update(updates)
             
             # Update PostgreSQL for dual-write consistency
+            conn = None
             try:
                 conn = self._get_pg_conn()
                 if conn:
                     cur = conn.cursor()
-                    set_clauses = []
-                    params = []
-                    mapping = {
-                        "full_name": "full_name",
-                        "email": "email",
-                        "is_verified": "is_verified",
-                        "hashed_password": "hashed_password",
-                        "auth_provider": "auth_provider",
-                        "profile_image": "profile_image"
-                    }
-                    for k, v in updates.items():
-                        if k in mapping:
-                            set_clauses.append(f"{mapping[k]} = %s")
-                            params.append(v)
-                    if set_clauses:
-                        set_clauses.append("updated_at = %s")
-                        params.append(datetime.now(timezone.utc))
-                        params.append(user_id)
-                        query = f"UPDATE users SET {', '.join(set_clauses)} WHERE id = %s"
-                        cur.execute(query, tuple(params))
-                        conn.commit()
-                        logger.info(f"Successfully dual-written user update for {user_id} to Supabase PostgreSQL")
-                    cur.close()
-                    conn.close()
+                    try:
+                        set_clauses = []
+                        params = []
+                        mapping = {
+                            "full_name": "full_name",
+                            "email": "email",
+                            "is_verified": "is_verified",
+                            "hashed_password": "hashed_password",
+                            "auth_provider": "auth_provider",
+                            "profile_image": "profile_image"
+                        }
+                        for k, v in updates.items():
+                            if k in mapping:
+                                set_clauses.append(f"{mapping[k]} = %s")
+                                params.append(v)
+                        if set_clauses:
+                            set_clauses.append("updated_at = %s")
+                            params.append(datetime.now(timezone.utc))
+                            params.append(user_id)
+                            query = f"UPDATE users SET {', '.join(set_clauses)} WHERE id = %s"
+                            cur.execute(query, tuple(params))
+                            conn.commit()
+                            logger.info(f"Successfully dual-written user update for {user_id} to Supabase PostgreSQL")
+                    finally:
+                        cur.close()
             except Exception as pg_err:
                 logger.error(f"Failed to update user {user_id} in PostgreSQL: {pg_err}")
+            finally:
+                if conn:
+                    conn.close()
             
             # If full_name or email is updated, reflect in Firebase Auth if available
             try:
@@ -390,23 +400,28 @@ class FirebaseService:
             })
             
             # 2. Update PostgreSQL for dual-write consistency
+            conn = None
             try:
                 conn = self._get_pg_conn()
                 if conn:
                     cur = conn.cursor()
-                    cur.execute("""
-                        UPDATE users 
-                        SET hashed_password = %s, updated_at = %s 
-                        WHERE id = %s
-                    """, (new_password_hash, datetime.now(timezone.utc), user_id))
-                    conn.commit()
-                    cur.close()
-                    conn.close()
+                    try:
+                        cur.execute("""
+                            UPDATE users 
+                            SET hashed_password = %s, updated_at = %s 
+                            WHERE id = %s
+                        """, (new_password_hash, datetime.now(timezone.utc), user_id))
+                        conn.commit()
+                    finally:
+                        cur.close()
                     logger.info(f"Successfully dual-written password update for user {user_id} to Supabase PostgreSQL")
                 else:
                     logger.error(f"Failed to get PostgreSQL connection for dual-write password update for user {user_id}")
             except Exception as pg_err:
                 logger.error(f"Failed to update password for user {user_id} in PostgreSQL: {pg_err}")
+            finally:
+                if conn:
+                    conn.close()
                 
             return True
         except Exception as e:

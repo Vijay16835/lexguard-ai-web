@@ -19,26 +19,31 @@ STORAGE_LIMIT_MB = 10.0
 def _get_user_stats_pg(user_id: str) -> dict:
     """Query PostgreSQL for live document count, high-risk count, and AI chat count."""
     stats = {"documents_analyzed": 0, "high_risk_count": 0, "ai_chat_count": 0}
+    conn = None
     try:
         from app.services.firebase_service import firebase_service
         conn = firebase_service._get_pg_conn()
         if conn:
             cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM documents WHERE user_id = %s", (user_id,))
-            stats["documents_analyzed"] = cur.fetchone()[0]
-            cur.execute(
-                "SELECT COUNT(*) FROM documents WHERE user_id = %s AND risk_level = 'High'",
-                (user_id,)
-            )
-            stats["high_risk_count"] = cur.fetchone()[0]
-            cur.execute("SELECT COUNT(*) FROM chat_history WHERE user_id = %s", (user_id,))
-            stats["ai_chat_count"] = cur.fetchone()[0]
-            cur.close()
-            conn.close()
+            try:
+                cur.execute("SELECT COUNT(*) FROM documents WHERE user_id = %s", (user_id,))
+                stats["documents_analyzed"] = cur.fetchone()[0]
+                cur.execute(
+                    "SELECT COUNT(*) FROM documents WHERE user_id = %s AND risk_level = 'High'",
+                    (user_id,)
+                )
+                stats["high_risk_count"] = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM chat_history WHERE user_id = %s", (user_id,))
+                stats["ai_chat_count"] = cur.fetchone()[0]
+            finally:
+                cur.close()
         else:
             logger.error(f"Failed to obtain Postgres connection in _get_user_stats_pg for {user_id}")
     except Exception as e:
         logger.error(f"Failed to fetch user stats from PostgreSQL for {user_id}: {e}")
+    finally:
+        if conn:
+            conn.close()
     return stats
 
 @router.get("/me")
@@ -50,8 +55,27 @@ async def get_profile(current_user: User = Depends(deps.get_current_user)):
         else:
             created_at_val = current_user.created_at
 
-    storage_used_mb = get_user_storage_usage_mb(current_user.id)
-    stats = _get_user_stats_pg(current_user.id)
+    import asyncio
+    
+    # Run storage check in a thread pool with 2.0s timeout
+    try:
+        storage_used_mb = await asyncio.wait_for(
+            asyncio.to_thread(get_user_storage_usage_mb, current_user.id),
+            timeout=2.0
+        )
+    except Exception as e:
+        logger.warning(f"Timeout/Error fetching storage usage for user {current_user.id}: {e}")
+        storage_used_mb = 0.0
+
+    # Run user stats query in a thread pool with 2.0s timeout
+    try:
+        stats = await asyncio.wait_for(
+            asyncio.to_thread(_get_user_stats_pg, current_user.id),
+            timeout=2.0
+        )
+    except Exception as e:
+        logger.warning(f"Timeout/Error fetching user stats from Postgres for user {current_user.id}: {e}")
+        stats = {"documents_analyzed": 0, "high_risk_count": 0, "ai_chat_count": 0}
 
     return {
         "id": current_user.id,

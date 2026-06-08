@@ -124,80 +124,84 @@ async def run_ai_analysis(document_id: str):
             })
             
         # Save to Supabase PostgreSQL database
+        conn = None
         try:
             import json
             conn = db._get_pg_conn()
             if conn:
                 cur = conn.cursor()
-            
-            # 1. Update documents table
-            cur.execute("""
-                UPDATE documents 
-                SET status = %s, 
-                    extracted_text = %s, 
-                    document_type = %s, 
-                    risk_score = %s, 
-                    risk_level = %s, 
-                    summary = %s, 
-                    analyzed_at = %s
-                WHERE id = %s
-            """, (
-                "completed",
-                extracted_text,
-                analysis_result.get("document_type", "Unknown"),
-                analysis_result.get("risk_score", 0),
-                analysis_result.get("risk_level", "Medium"),
-                analysis_result.get("summary", ""),
-                datetime.now(timezone.utc),
-                document_id
-            ))
-            
-            # 2. Insert/Update analysis table
-            cur.execute("""
-                INSERT INTO analysis (document_id, risk_level, risk_score, summary, ai_confidence, parties, important_dates, recommendations, raw_analysis_data)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (document_id) DO UPDATE SET
-                    risk_level = EXCLUDED.risk_level,
-                    risk_score = EXCLUDED.risk_score,
-                    summary = EXCLUDED.summary,
-                    ai_confidence = EXCLUDED.ai_confidence,
-                    parties = EXCLUDED.parties,
-                    important_dates = EXCLUDED.important_dates,
-                    recommendations = EXCLUDED.recommendations,
-                    raw_analysis_data = EXCLUDED.raw_analysis_data
-            """, (
-                document_id,
-                analysis_result.get("risk_level", "Medium"),
-                analysis_result.get("risk_score", 0),
-                analysis_result.get("summary", ""),
-                0.85,
-                json.dumps(analysis_result.get("parties", [])),
-                json.dumps(analysis_result.get("important_dates", [])),
-                json.dumps(analysis_result.get("recommendations", [])),
-                json.dumps(analysis_result)
-            ))
-            
-            # 3. Insert clauses table
-            cur.execute("DELETE FROM clauses WHERE document_id = %s", (document_id,))
-            for clause_data in analysis_result.get("clauses", []):
-                cur.execute("""
-                    INSERT INTO clauses (document_id, title, content, summary, risk_level, mitigation_advice)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """, (
-                    document_id,
-                    clause_data.get("title", "Untitled Clause"),
-                    clause_data.get("content", ""),
-                    clause_data.get("explanation", clause_data.get("summary", "")),
-                    clause_data.get("risk_level", "Low"),
-                    clause_data.get("mitigation_advice", "")
-                ))
-                
-            conn.commit()
-            cur.close()
-            conn.close()
-            print(f"[OK] Successfully dual-wrote analysis and clauses for {document_id} to Supabase PostgreSQL")
+                try:
+                    # 1. Update documents table
+                    cur.execute("""
+                        UPDATE documents 
+                        SET status = %s, 
+                            extracted_text = %s, 
+                            document_type = %s, 
+                            risk_score = %s, 
+                            risk_level = %s, 
+                            summary = %s, 
+                            analyzed_at = %s
+                        WHERE id = %s
+                    """, (
+                        "completed",
+                        extracted_text,
+                        analysis_result.get("document_type", "Unknown"),
+                        analysis_result.get("risk_score", 0),
+                        analysis_result.get("risk_level", "Medium"),
+                        analysis_result.get("summary", ""),
+                        datetime.now(timezone.utc),
+                        document_id
+                    ))
+                    
+                    # 2. Insert/Update analysis table
+                    cur.execute("""
+                        INSERT INTO analysis (document_id, risk_level, risk_score, summary, ai_confidence, parties, important_dates, recommendations, raw_analysis_data)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (document_id) DO UPDATE SET
+                            risk_level = EXCLUDED.risk_level,
+                            risk_score = EXCLUDED.risk_score,
+                            summary = EXCLUDED.summary,
+                            ai_confidence = EXCLUDED.ai_confidence,
+                            parties = EXCLUDED.parties,
+                            important_dates = EXCLUDED.important_dates,
+                            recommendations = EXCLUDED.recommendations,
+                            raw_analysis_data = EXCLUDED.raw_analysis_data
+                    """, (
+                        document_id,
+                        analysis_result.get("risk_level", "Medium"),
+                        analysis_result.get("risk_score", 0),
+                        analysis_result.get("summary", ""),
+                        0.85,
+                        json.dumps(analysis_result.get("parties", [])),
+                        json.dumps(analysis_result.get("important_dates", [])),
+                        json.dumps(analysis_result.get("recommendations", [])),
+                        json.dumps(analysis_result)
+                    ))
+                    
+                    # 3. Insert clauses table
+                    cur.execute("DELETE FROM clauses WHERE document_id = %s", (document_id,))
+                    for clause_data in analysis_result.get("clauses", []):
+                        cur.execute("""
+                            INSERT INTO clauses (document_id, title, content, summary, risk_level, mitigation_advice)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """, (
+                            document_id,
+                            clause_data.get("title", "Untitled Clause"),
+                            clause_data.get("content", ""),
+                            clause_data.get("explanation", clause_data.get("summary", "")),
+                            clause_data.get("risk_level", "Low"),
+                            clause_data.get("mitigation_advice", "")
+                        ))
+                        
+                    conn.commit()
+                finally:
+                    cur.close()
+                print(f"[OK] Successfully dual-wrote analysis and clauses for {document_id} to Supabase PostgreSQL")
         except Exception as pg_err:
             print(f"[FAIL] Failed to dual-write analysis/clauses to PostgreSQL: {pg_err}")
+        finally:
+            if conn:
+                conn.close()
         
         print(f"[OK] Analysis complete for document {document_id}: {analysis_result.get('risk_level')} risk")
         
@@ -208,15 +212,23 @@ async def run_ai_analysis(document_id: str):
             db.update_document(document_id, {"status": "failed"})
             
             # Update failed status in PostgreSQL
-            conn = db._get_pg_conn()
-            if conn:
-                cur = conn.cursor()
-                cur.execute("UPDATE documents SET status = 'failed' WHERE id = %s", (document_id,))
-                conn.commit()
-                cur.close()
-                conn.close()
-        except Exception as pg_err:
-            print(f"Failed to update failed status in PostgreSQL: {pg_err}")
+            conn_fail = None
+            try:
+                conn_fail = db._get_pg_conn()
+                if conn_fail:
+                    cur = conn_fail.cursor()
+                    try:
+                        cur.execute("UPDATE documents SET status = 'failed' WHERE id = %s", (document_id,))
+                        conn_fail.commit()
+                    finally:
+                        cur.close()
+            except Exception as pg_err:
+                print(f"Failed to update failed status in PostgreSQL: {pg_err}")
+            finally:
+                if conn_fail:
+                    conn_fail.close()
+        except Exception as update_err:
+            print(f"Failed to update document status to failed: {update_err}")
 
 
 
@@ -235,7 +247,15 @@ async def upload_document(
         raise HTTPException(status_code=400, detail=error_msg)
         
     size_mb = round(len(file_content) / (1024 * 1024), 2)
-    used_storage_mb = get_user_storage_usage_mb(current_user.id)
+    import asyncio
+    try:
+        used_storage_mb = await asyncio.wait_for(
+            asyncio.to_thread(get_user_storage_usage_mb, current_user.id),
+            timeout=2.0
+        )
+    except Exception as e:
+        print(f"Timeout/Error fetching storage usage in upload: {e}")
+        used_storage_mb = 0.0
     
     if used_storage_mb + size_mb > 10.0:
         raise HTTPException(status_code=400, detail="Storage limit reached. Delete files to continue.")
@@ -267,22 +287,27 @@ async def upload_document(
         download_url = ""
         
     # Store file URL in PostgreSQL
+    conn = None
     try:
         conn = db._get_pg_conn()
         if conn:
             cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO documents (id, user_id, name, path, type, size_in_mb, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (doc_id, current_user.id, file.filename, download_url, file_ext, size_mb, "pending"))
-            conn.commit()
-            cur.close()
-            conn.close()
+            try:
+                cur.execute("""
+                    INSERT INTO documents (id, user_id, name, path, type, size_in_mb, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (doc_id, current_user.id, file.filename, download_url, file_ext, size_mb, "pending"))
+                conn.commit()
+            finally:
+                cur.close()
             print(f"Successfully inserted document {doc_id} into PostgreSQL")
         else:
             print("Failed to get Postgres connection in upload_document")
     except Exception as e:
         print(f"Failed to save document to PostgreSQL: {e}")
+    finally:
+        if conn:
+            conn.close()
     
     # Create DB record in Firestore (Keep existing logic running parallel for now)
     doc_data = {
