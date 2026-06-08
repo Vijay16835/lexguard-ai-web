@@ -20,9 +20,26 @@ def create_access_token(subject: Union[str, Any], expires_delta: timedelta = Non
     return encoded_jwt
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    import logging
+    logger = logging.getLogger(__name__)
+    char_len = len(plain_password) if plain_password else 0
+    byte_len = len(plain_password.encode("utf-8")) if plain_password else 0
+    logger.info(f"[Security] verify_password: plain_password char_len={char_len}, byte_len={byte_len}")
+    logger.info(f"[Security] verify_password: plain_password={repr(plain_password)}, hashed_password={repr(hashed_password)}")
+    if byte_len > 72:
+        logger.warning("[Security] verify_password: password exceeds 72 bytes, failing verification.")
+        return False
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
+    import logging
+    logger = logging.getLogger(__name__)
+    pwd_type = type(password)
+    pwd_len = len(password) if password else 0
+    pwd_bytes_len = len(password.encode("utf-8")) if password else 0
+    logger.info(f"[Security] get_password_hash: type(password)={pwd_type}, password={repr(password)}, len={pwd_len}, bytes_len={pwd_bytes_len}")
+    if pwd_bytes_len > 72:
+        raise ValueError("Password cannot be longer than 72 bytes")
     return pwd_context.hash(password)
 
 def generate_otp() -> str:

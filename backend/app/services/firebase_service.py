@@ -349,12 +349,33 @@ class FirebaseService:
             return False
 
     def update_user_password(self, user_id: str, new_password_hash: str) -> bool:
-        """Update user password hash in Firestore and Auth."""
+        """Update user password hash in Firestore, Auth, and Supabase PostgreSQL."""
         try:
+            # 1. Update Firestore
             self.db.collection("users").document(user_id).update({
                 "hashed_password": new_password_hash,
                 "updated_at": datetime.now(timezone.utc).isoformat()
             })
+            
+            # 2. Update PostgreSQL for dual-write consistency
+            try:
+                conn = self._get_pg_conn()
+                if conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        UPDATE users 
+                        SET hashed_password = %s, updated_at = %s 
+                        WHERE id = %s
+                    """, (new_password_hash, datetime.now(timezone.utc), user_id))
+                    conn.commit()
+                    cur.close()
+                    conn.close()
+                    logger.info(f"Successfully dual-written password update for user {user_id} to Supabase PostgreSQL")
+                else:
+                    logger.error(f"Failed to get PostgreSQL connection for dual-write password update for user {user_id}")
+            except Exception as pg_err:
+                logger.error(f"Failed to update password for user {user_id} in PostgreSQL: {pg_err}")
+                
             return True
         except Exception as e:
             logger.error(f"Error updating password for {user_id}: {e}")

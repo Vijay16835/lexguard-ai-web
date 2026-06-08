@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from typing import Optional
 
 class Token(BaseModel):
@@ -11,9 +11,23 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
 
+    @field_validator('password')
+    @classmethod
+    def validate_password_length(cls, v: str) -> str:
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError("Password cannot be longer than 72 bytes")
+        return v
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
+    @field_validator('password')
+    @classmethod
+    def validate_password_length(cls, v: str) -> str:
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError("Password cannot be longer than 72 bytes")
+        return v
 
 class SendOTP(BaseModel):
     email: EmailStr
@@ -30,9 +44,23 @@ class ResetPassword(BaseModel):
     otp: str
     new_password: str
 
+    @field_validator('new_password')
+    @classmethod
+    def validate_password_length(cls, v: str) -> str:
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError("Password cannot be longer than 72 bytes")
+        return v
+
 class ChangePassword(BaseModel):
     current_password: str
     new_password: str
+
+    @field_validator('current_password', 'new_password')
+    @classmethod
+    def validate_passwords_length(cls, v: str) -> str:
+        if len(v.encode('utf-8')) > 72:
+            raise ValueError("Password cannot be longer than 72 bytes")
+        return v
 
 class GoogleAuth(BaseModel):
     firebase_uid: str                      # Firebase UID from google_sign_in
