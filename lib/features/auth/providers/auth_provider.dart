@@ -196,35 +196,61 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Initialize once per provider lifetime
-      if (!_googleInitialized) {
-        await _googleSignIn.initialize();
-        _googleInitialized = true;
-        debugPrint('[AuthProvider] GoogleSignIn initialized');
+      User? firebaseUser;
+      String? idToken;
+
+      if (kIsWeb) {
+        debugPrint('[AuthProvider] Starting Google Sign-In with popup for Web...');
+        final GoogleAuthProvider googleProvider = GoogleAuthProvider();
+        googleProvider.addScope('email');
+        googleProvider.addScope('profile');
+        
+        final UserCredential userCredential =
+            await _firebaseAuth.signInWithPopup(googleProvider);
+        firebaseUser = userCredential.user;
+        if (firebaseUser != null) {
+          idToken = await firebaseUser.getIdToken();
+        }
+      } else {
+        // Initialize once per provider lifetime for mobile
+        if (!_googleInitialized) {
+          await _googleSignIn.initialize();
+          _googleInitialized = true;
+          debugPrint('[AuthProvider] GoogleSignIn initialized');
+        }
+
+        debugPrint('[AuthProvider] Starting Google Sign-In for Mobile...');
+        final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+
+        if (googleUser == null) {
+          debugPrint('[AuthProvider] Google Sign-In cancelled by user.');
+          _authState = AuthState.unauthenticated;
+          notifyListeners();
+          return false;
+        }
+
+        final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+
+        if (googleAuth.idToken == null) {
+          debugPrint('[AuthProvider] Google idToken is null — OAuth client may not be configured.');
+          _errorMessage = 'Google Sign-In is not fully configured. Please contact support.';
+          _authState = AuthState.unauthenticated;
+          notifyListeners();
+          return false;
+        }
+
+        final OAuthCredential credential = GoogleAuthProvider.credential(
+          idToken: googleAuth.idToken,
+        );
+
+        debugPrint('[AuthProvider] Signing into Firebase with Google credential...');
+        final UserCredential userCredential =
+            await _firebaseAuth.signInWithCredential(credential);
+        firebaseUser = userCredential.user;
+        if (firebaseUser != null) {
+          idToken = await firebaseUser.getIdToken() ?? googleAuth.idToken;
+        }
       }
-
-      debugPrint('[AuthProvider] Starting Google Sign-In...');
-      final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
-
-      // In google_sign_in ^7.x with the instance API, authentication is synchronous
-      final GoogleSignInAuthentication googleAuth = googleUser.authentication;
-
-      if (googleAuth.idToken == null) {
-        debugPrint('[AuthProvider] Google idToken is null — OAuth client may not be configured.');
-        _errorMessage = 'Google Sign-In is not fully configured. Please contact support.';
-        _authState = AuthState.unauthenticated;
-        notifyListeners();
-        return false;
-      }
-
-      final OAuthCredential credential = GoogleAuthProvider.credential(
-        idToken: googleAuth.idToken,
-      );
-
-      debugPrint('[AuthProvider] Signing into Firebase with Google credential...');
-      final UserCredential userCredential =
-          await _firebaseAuth.signInWithCredential(credential);
-      final User? firebaseUser = userCredential.user;
 
       if (firebaseUser == null) {
         _errorMessage = 'Firebase authentication returned no user.';
@@ -245,14 +271,12 @@ class AuthProvider extends ChangeNotifier {
       debugPrint('  photoURL    : $_googlePhotoURL');
       debugPrint('  firebaseUid : $_firebaseUid');
 
-      final String? firebaseIdToken = await firebaseUser.getIdToken();
-
       final result = await _authService.googleAuth(
         firebaseUser.email!,
         firebaseUser.displayName ?? 'Google User',
         firebaseUser.photoURL,
         firebaseUid: firebaseUser.uid,   // ← primary key sent to backend
-        idToken: firebaseIdToken ?? googleAuth.idToken!,
+        idToken: idToken,
       );
 
       if (result['success']) {
