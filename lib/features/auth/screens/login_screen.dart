@@ -104,21 +104,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     // Logo
                     Row(
                       children: [
-                        Container(
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            gradient: const LinearGradient(colors: AppColors.goldGradient),
-                            borderRadius: BorderRadius.circular(12),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppColors.gold.withValues(alpha: 0.3),
-                                blurRadius: 16,
-                                spreadRadius: 2,
-                              ),
-                            ],
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.asset(
+                            'assets/images/app_logo.png',
+                            width: 48,
+                            height: 48,
+                            fit: BoxFit.cover,
                           ),
-                          child: const Icon(Icons.shield_outlined, color: AppColors.navy, size: 26),
                         ),
                         const SizedBox(width: 12),
                         Text(

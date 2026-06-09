@@ -102,14 +102,14 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Container(
-                    width: 110, height: 110,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      gradient: const LinearGradient(colors: AppColors.goldGradient),
-                      boxShadow: [BoxShadow(color: AppColors.gold.withValues(alpha: 0.35), blurRadius: 40, spreadRadius: 5)],
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: Image.asset(
+                      'assets/images/app_logo.png',
+                      width: 110,
+                      height: 110,
+                      fit: BoxFit.cover,
                     ),
-                    child: const Icon(Icons.shield_outlined, size: 58, color: AppColors.navy),
                   ).animate().scale(duration: 700.ms, curve: Curves.elasticOut).fadeIn(),
 
                   const SizedBox(height: 28),

@@ -518,15 +518,14 @@ class _HeroCard extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            width: 90,
-            height: 90,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.gold.withValues(alpha: 0.1),
-              border: Border.all(color: AppColors.gold.withValues(alpha: 0.2), width: 2),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.asset(
+              'assets/images/app_logo.png',
+              width: 80,
+              height: 80,
+              fit: BoxFit.cover,
             ),
-            child: const Icon(Icons.shield_outlined, size: 48, color: AppColors.gold),
           ),
         ],
       ),
