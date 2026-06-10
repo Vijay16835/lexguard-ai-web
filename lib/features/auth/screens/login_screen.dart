@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
@@ -223,7 +224,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       validator: (v) {
                         if (v == null || v.isEmpty) return 'Password is required';
-                        if (v.length < 6) return 'Password must be at least 6 characters';
+                        if (v.length < 8) return 'Password must be at least 8 characters';
+                        if (utf8.encode(v).length > 72) return 'Password cannot exceed 72 bytes';
                         return null;
                       },
                     ).animate(delay: 250.ms).fadeIn().slideY(begin: 0.2, end: 0),

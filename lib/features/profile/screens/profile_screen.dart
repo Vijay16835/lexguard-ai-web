@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -337,7 +338,12 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
                 obscure: _obscureCurrent,
                 onToggle: () => setState(() => _obscureCurrent = !_obscureCurrent),
               ),
-              validator: (val) => val == null || val.isEmpty ? 'Current password required' : null,
+              validator: (val) {
+                if (val == null || val.isEmpty) return 'Current password required';
+                if (val.length < 8) return 'Password must be at least 8 characters';
+                if (utf8.encode(val).length > 72) return 'Password cannot exceed 72 bytes';
+                return null;
+              },
             ),
             const SizedBox(height: 16),
 
@@ -355,7 +361,9 @@ class _ChangePasswordSheetState extends State<_ChangePasswordSheet> {
                 onToggle: () => setState(() => _obscureNew = !_obscureNew),
               ),
               validator: (val) {
-                if (val == null || val.length < 6) return 'Password must be at least 6 characters';
+                if (val == null || val.isEmpty) return 'New password required';
+                if (val.length < 8) return 'Password must be at least 8 characters';
+                if (utf8.encode(val).length > 72) return 'Password cannot exceed 72 bytes';
                 return null;
               },
             ),

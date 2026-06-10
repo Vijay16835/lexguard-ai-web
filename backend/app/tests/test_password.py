@@ -62,6 +62,28 @@ class TestPasswordValidation(unittest.TestCase):
             ChangePassword(current_password="safe_password", new_password=pwd_73)
         self.assertIn("Password cannot be longer than 72 bytes", str(ctx.exception))
 
+        # 7.1. Test passwords shorter than 8 characters
+        pwd_short = "short"
+        with self.assertRaises(ValidationError) as ctx:
+            UserCreate(full_name="Test User", email="test@example.com", password=pwd_short)
+        self.assertIn("Password must be at least 8 characters long", str(ctx.exception))
+
+        with self.assertRaises(ValidationError) as ctx:
+            UserLogin(email="test@example.com", password=pwd_short)
+        self.assertIn("Password must be at least 8 characters long", str(ctx.exception))
+
+        with self.assertRaises(ValidationError) as ctx:
+            ResetPassword(email="test@example.com", otp="123456", new_password=pwd_short)
+        self.assertIn("Password must be at least 8 characters long", str(ctx.exception))
+
+        with self.assertRaises(ValidationError) as ctx:
+            ChangePassword(current_password=pwd_short, new_password="safe_password")
+        self.assertIn("Password must be at least 8 characters long", str(ctx.exception))
+
+        with self.assertRaises(ValidationError) as ctx:
+            ChangePassword(current_password="safe_password", new_password=pwd_short)
+        self.assertIn("Password must be at least 8 characters long", str(ctx.exception))
+
     def test_non_ascii_byte_length_validation(self):
         # 8. Test UTF-8 byte length vs character length
         # Russian character 'ш' takes 2 bytes. 37 * 2 = 74 bytes, but only 37 characters.

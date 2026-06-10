@@ -14,6 +14,8 @@ class UserCreate(BaseModel):
     @field_validator('password')
     @classmethod
     def validate_password_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
         if len(v.encode('utf-8')) > 72:
             raise ValueError("Password cannot be longer than 72 bytes")
         return v
@@ -25,6 +27,8 @@ class UserLogin(BaseModel):
     @field_validator('password')
     @classmethod
     def validate_password_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
         if len(v.encode('utf-8')) > 72:
             raise ValueError("Password cannot be longer than 72 bytes")
         return v
@@ -47,6 +51,8 @@ class ResetPassword(BaseModel):
     @field_validator('new_password')
     @classmethod
     def validate_password_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
         if len(v.encode('utf-8')) > 72:
             raise ValueError("Password cannot be longer than 72 bytes")
         return v
@@ -58,6 +64,8 @@ class ChangePassword(BaseModel):
     @field_validator('current_password', 'new_password')
     @classmethod
     def validate_passwords_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
         if len(v.encode('utf-8')) > 72:
             raise ValueError("Password cannot be longer than 72 bytes")
         return v
