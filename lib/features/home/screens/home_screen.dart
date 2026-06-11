@@ -7,6 +7,7 @@ import 'package:lexguard_ai/features/home/providers/home_provider.dart';
 import 'package:lexguard_ai/features/auth/providers/auth_provider.dart';
 import 'package:lexguard_ai/features/profile/providers/profile_provider.dart';
 import 'package:lexguard_ai/widgets/common/theme_selection_modal.dart';
+import 'package:lexguard_ai/core/utils/date_time_utils.dart';
 
 import 'package:lexguard_ai/widgets/cards/document_card.dart';
 import 'package:lexguard_ai/widgets/cards/stat_card.dart';
@@ -28,8 +29,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    debugPrint('[StartupSequence] 7. Home screen rendering starting...');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<HomeProvider>().loadDashboard();
+      debugPrint('[StartupSequence] 7. Home screen rendering completed (rendered successfully)');
     });
   }
 
@@ -69,7 +72,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Good morning,',
+                                '${DateTimeUtils.getGreeting()},',
                                 style: GoogleFonts.inter(
                                   fontSize: 13,
                                   color: AppColors.textHint,

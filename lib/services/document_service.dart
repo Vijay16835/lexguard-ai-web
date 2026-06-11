@@ -21,7 +21,8 @@ class DocumentService {
 
   DocumentService() {
     _dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 30),
+      // Increased to 45s to handle backend cold starts (Render free tier spin-up)
+      connectTimeout: const Duration(seconds: 45),
       receiveTimeout: const Duration(seconds: 120),
       sendTimeout: const Duration(seconds: 60),
     ));

@@ -6,6 +6,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lexguard_ai/core/theme/app_colors.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:lexguard_ai/features/auth/providers/auth_provider.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:lexguard_ai/firebase_options.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:lexguard_ai/services/api_service.dart';
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -36,27 +42,72 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
 
   Future<void> _initializeApp() async {
     try {
+      final isTest = !kIsWeb && Platform.environment.containsKey('FLUTTER_TEST');
+
+      // 1. Firebase.initializeApp()
+      debugPrint('[StartupSequence] 1. Firebase.initializeApp() starting...');
+      if (!isTest && Firebase.apps.isEmpty) {
+        await Firebase.initializeApp(
+          options: DefaultFirebaseOptions.currentPlatform,
+        );
+      }
+      debugPrint('[StartupSequence] 1. Firebase.initializeApp() completed');
+
+      // 2. SecureStorage initialization
+      debugPrint('[StartupSequence] 2. SecureStorage initialization starting...');
+      final storage = const FlutterSecureStorage();
+      if (!isTest) {
+        // Test read/write to ensure storage is operational
+        await storage.write(key: 'startup_verify_test', value: 'ok');
+        await storage.delete(key: 'startup_verify_test');
+      }
+      debugPrint('[StartupSequence] 2. SecureStorage initialization completed');
+
+      // 3. Auth token loading
+      debugPrint('[StartupSequence] 3. Auth token loading starting...');
+      final token = isTest ? null : await storage.read(key: 'auth_token');
+      debugPrint('[StartupSequence] 3. Auth token loading completed (token exists: ${token != null})');
+
+      // 4. User session restoration
+      debugPrint('[StartupSequence] 4. User session restoration starting...');
+      if (!mounted) return;
       final auth = context.read<AuthProvider>();
       
-      // Start both the auth check and a minimum delay timer
-      // We also add a timeout to ensure we never hang forever
-      await Future.wait([
-        auth.checkInitialAuth().catchError((e) {
-          debugPrint("Auth check failed: $e");
-        }),
-        Future.delayed(const Duration(milliseconds: 600)),
-      ]).timeout(const Duration(seconds: 10));
+      if (!isTest) {
+        // Pre-warm the backend asynchronously while checking initial auth
+        auth.validateBackend().catchError((e) => false);
+        await auth.checkInitialAuth().timeout(const Duration(seconds: 45));
+      }
+      debugPrint('[StartupSequence] 4. User session restoration completed (isAuthenticated: ${auth?.isAuthenticated ?? false})');
+
+      // 5. Provider initialization
+      debugPrint('[StartupSequence] 5. Provider initialization starting...');
+      if (auth == null) {
+        throw Exception('AuthProvider failed to initialize');
+      }
+      debugPrint('[StartupSequence] 5. Provider initialization completed');
+
+      // 6. API client initialization
+      debugPrint('[StartupSequence] 6. API client initialization starting...');
+      final apiService = ApiService();
+      if (apiService == null) {
+        throw Exception('ApiService failed to initialize');
+      }
+      debugPrint('[StartupSequence] 6. API client initialization completed');
+
+      // Minimum delay for splash animation
+      await Future.delayed(const Duration(milliseconds: 600));
 
       if (!mounted) return;
       _navigate();
-    } catch (e) {
-      debugPrint('Initialization error: $e');
+    } catch (e, stack) {
+      debugPrint('[StartupSequence] ERROR: Startup verification failed: $e\n$stack');
       setState(() {
         _showError = true;
-        _errorMsg = "Taking longer than usual. Please check your connection.";
+        _errorMsg = "Startup initialization failed. Please check your connection.";
       });
       
-      // Even if there's an error, we try to navigate after a delay to avoid freezing
+      // Try to navigate after a delay to avoid freezing
       await Future.delayed(const Duration(seconds: 3));
       if (mounted) _navigate();
     }
