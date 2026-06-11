@@ -20,6 +20,34 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   bool _obscurePassword = true;
+  bool _initialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      if (auth.errorMessage != 'An account with this email already exists. Please login instead.') {
+        auth.clearErrorMessage();
+      }
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_initialized) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map<String, dynamic> && args.containsKey('email')) {
+        _emailCtrl.text = args['email'] ?? '';
+        _passCtrl.clear();
+      } else if (args is String) {
+        _emailCtrl.text = args;
+        _passCtrl.clear();
+      }
+      _initialized = true;
+    }
+  }
 
   @override
   void dispose() {
@@ -365,7 +393,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 GestureDetector(
-                  onTap: () => Navigator.pushNamed(context, '/signup'),
+                  onTap: () {
+                    context.read<AuthProvider>().clearErrorMessage();
+                    Navigator.pushNamed(context, '/signup');
+                  },
                   child: Text(
                     'Sign Up',
                     style: GoogleFonts.inter(

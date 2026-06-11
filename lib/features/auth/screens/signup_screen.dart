@@ -75,14 +75,33 @@ class _SignupScreenState extends State<SignupScreen> {
           arguments: {'email': _emailCtrl.text.trim(), 'purpose': 'registration'}
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(auth.errorMessage ?? 'Signup failed',
-                style: GoogleFonts.inter(color: Colors.white)),
-            backgroundColor: AppColors.error,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        final errorMsg = auth.errorMessage ?? '';
+        if (errorMsg.toLowerCase().contains('already exists') || errorMsg.toLowerCase().contains('already registered')) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('An account with this email already exists.',
+                  style: GoogleFonts.inter(color: Colors.white)),
+              backgroundColor: Colors.orange,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          auth.setErrorMessage('An account with this email already exists. Please login instead.');
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/login',
+            (route) => false,
+            arguments: {'email': _emailCtrl.text.trim()},
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(auth.errorMessage ?? 'Signup failed',
+                  style: GoogleFonts.inter(color: Colors.white)),
+              backgroundColor: AppColors.error,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -115,7 +134,10 @@ class _SignupScreenState extends State<SignupScreen> {
             const SizedBox(height: 24),
             // Back Button
             IconButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () {
+                context.read<AuthProvider>().clearErrorMessage();
+                Navigator.pop(context);
+              },
               icon: Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
@@ -327,7 +349,10 @@ class _SignupScreenState extends State<SignupScreen> {
                   ),
                 ),
                 GestureDetector(
-                  onTap: () => Navigator.pop(context),
+                  onTap: () {
+                    context.read<AuthProvider>().clearErrorMessage();
+                    Navigator.pop(context);
+                  },
                   child: Text(
                     'Sign In',
                     style: GoogleFonts.inter(
@@ -385,7 +410,10 @@ class _SignupScreenState extends State<SignupScreen> {
                             children: [
                               // Back button in branding panel for desktop
                               IconButton(
-                                onPressed: () => Navigator.pop(context),
+                                onPressed: () {
+                                  context.read<AuthProvider>().clearErrorMessage();
+                                  Navigator.pop(context);
+                                },
                                 icon: Container(
                                   padding: const EdgeInsets.all(8),
                                   decoration: BoxDecoration(

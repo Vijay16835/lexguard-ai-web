@@ -51,6 +51,16 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setErrorMessage(String? message) {
+    _errorMessage = message;
+    notifyListeners();
+  }
+
+  void clearErrorMessage() {
+    _errorMessage = null;
+    notifyListeners();
+  }
+
   Future<bool> login(String email, String password) async {
     print('[AuthProvider] login() called');
     _authState = AuthState.loading;

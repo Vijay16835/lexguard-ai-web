@@ -441,6 +441,7 @@ class FirebaseService:
                 "expires_at": expires_at.isoformat(),
                 "is_verified": False,
                 "purpose": purpose,
+                "attempts": 0,
                 "registration_data": json.dumps(registration_data) if registration_data else None,
                 "created_at": datetime.now(timezone.utc).isoformat()
             }

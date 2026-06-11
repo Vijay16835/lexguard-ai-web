@@ -26,29 +26,9 @@ async def signup(user_in: UserCreate, background_tasks: BackgroundTasks, db = De
     try:
         # Check if user already exists in Firestore
         user_data = db.get_user_by_email(email)
-        if user_data:
-            if user_data.get("is_verified"):
-                logger.warning(f"[Auth API] /signup conflict: User with email '{email}' already exists and is verified.")
-                raise HTTPException(status_code=400, detail="User with this email already exists")
-            # If not verified, overwrite password and full_name
-            logger.info(f"[Auth API] /signup: Existing unverified user '{email}' found. Overwriting name and password.")
-            db.update_user(user_data["id"], {
-                "full_name": user_in.full_name,
-                "hashed_password": get_password_hash(user_in.password),
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            })
-            user_id = user_data["id"]
-        else:
-            # Create user in Firebase / Firestore
-            logger.info(f"[Auth API] /signup: Creating new unverified user '{email}' in database.")
-            user_data = db.create_user(
-                email=email,
-                password_hash=get_password_hash(user_in.password),
-                full_name=user_in.full_name,
-                is_verified=False,
-                auth_provider="email"
-            )
-            user_id = user_data["id"]
+        if user_data and user_data.get("is_verified"):
+            logger.warning(f"[Auth API] /signup conflict: User with email '{email}' already exists and is verified.")
+            raise HTTPException(status_code=400, detail="User with this email already exists")
         
         # Generate random 6-digit OTP
         otp_code = "".join(random.choices(string.digits, k=6))
@@ -56,12 +36,23 @@ async def signup(user_in: UserCreate, background_tasks: BackgroundTasks, db = De
         logger.info("OTP generated")
         logger.info(f"[Auth API] /signup: Generated OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
         
+        # Store registration data temporarily in the OTP verification record
+        registration_data = {
+            "full_name": user_in.full_name,
+            "password_hash": get_password_hash(user_in.password)
+        }
+        
+        # Do not store plain OTP values
+        import hashlib
+        hashed_otp = hashlib.sha256(otp_code.encode()).hexdigest()
+        
         logger.info(f"[Auth API] /signup: Saving OTP to database for '{email}'...")
         saved = db.save_otp(
             email=email,
-            otp_code=otp_code,
+            otp_code=hashed_otp,
             expires_at=expires_at,
-            purpose="registration"
+            purpose="registration",
+            registration_data=registration_data
         )
         if not saved:
             logger.error(f"[Auth API] /signup database save failure: db.save_otp returned False for '{email}'")
@@ -173,29 +164,61 @@ async def google_auth_endpoint(google_in: GoogleAuth, db = Depends(get_db)):
 async def verify_otp(data: OTPVerify, db = Depends(get_db)):
     try:
         email = data.email.lower().strip()
-        user_data = db.get_user_by_email(email)
-        if not user_data:
-            raise HTTPException(status_code=404, detail="User not found")
-            
-        if user_data.get("is_verified"):
-            raise HTTPException(status_code=400, detail="User is already verified")
-            
         otp_record = db.get_otp(email)
-        if not otp_record or otp_record.get("otp_code") != data.otp:
-            raise HTTPException(status_code=400, detail="Invalid OTP")
+        if not otp_record:
+            raise HTTPException(status_code=400, detail="No verification code found. Please request a new one.")
+            
+        # Check maximum verification attempts (5 attempts)
+        attempts = otp_record.get("attempts", 0) + 1
+        # Update attempts in the database
+        db.db.collection("otp_verifications").document(email).update({"attempts": attempts})
+        
+        if attempts > 5:
+            # Delete OTP record for security
+            db.delete_otp_record(email)
+            raise HTTPException(status_code=400, detail="Maximum verification attempts exceeded. Please sign up again.")
+            
+        # Verify code matches hashed OTP
+        import hashlib
+        hashed_input = hashlib.sha256(data.otp.encode()).hexdigest()
+        if otp_record.get("otp_code") != hashed_input:
+            raise HTTPException(status_code=400, detail=f"Invalid verification code. Attempt {attempts} of 5.")
             
         expires_at_str = otp_record.get("expires_at")
         expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
         if not expires_at or expires_at < datetime.now(timezone.utc):
-            raise HTTPException(status_code=400, detail="Expired OTP")
+            raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
             
-        # Verify user and delete OTP
-        db.update_user(user_data["id"], {"is_verified": True})
+        # Check purpose
+        purpose = otp_record.get("purpose")
+        
+        if purpose == "registration":
+            # ONLY create the user now
+            import json
+            reg_data_str = otp_record.get("registration_data")
+            if not reg_data_str:
+                raise HTTPException(status_code=400, detail="Registration data not found. Please sign up again.")
+            reg_data = json.loads(reg_data_str)
+            
+            # Create user and mark is_verified = True
+            user_data = db.create_user(
+                email=email,
+                password_hash=reg_data["password_hash"],
+                full_name=reg_data["full_name"],
+                is_verified=True,
+                auth_provider="email"
+            )
+        else:
+            # For password reset or other purposes, load existing user
+            user_data = db.get_user_by_email(email)
+            if not user_data:
+                raise HTTPException(status_code=404, detail="User not found")
+        
+        # Remove OTP after successful verification
         db.delete_otp_record(email)
         
         # Reload user
-        updated_user_data = db.get_user_by_id(user_data["id"])
-        user = User(**updated_user_data)
+        user = User(**user_data)
         
         access_token = create_access_token(subject=user.id)
         
@@ -243,8 +266,11 @@ async def send_otp(data: SendOTP, background_tasks: BackgroundTasks, db = Depend
     email = data.email.lower().strip()
     logger.info(f"[Auth API] /send-otp entry: email='{email}'")
     try:
+        # Check if there is an active registration OTP record or existing user
+        otp_record = db.get_otp(email)
         user_data = db.get_user_by_email(email)
-        if not user_data:
+        
+        if not user_data and not otp_record:
             logger.warning(f"[Auth API] /send-otp user not found: '{email}'")
             raise HTTPException(status_code=404, detail="Email account not found.")
             
@@ -253,12 +279,25 @@ async def send_otp(data: SendOTP, background_tasks: BackgroundTasks, db = Depend
         logger.info("OTP generated")
         logger.info(f"[Auth API] /send-otp: Generated OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
         
+        import hashlib
+        hashed_otp = hashlib.sha256(otp_code.encode()).hexdigest()
+        
+        # Preserve existing registration data if any
+        reg_data = None
+        if otp_record and otp_record.get("registration_data"):
+            import json
+            try:
+                reg_data = json.loads(otp_record["registration_data"])
+            except Exception:
+                pass
+                
         logger.info(f"[Auth API] /send-otp: Saving OTP to database for '{email}'...")
         saved = db.save_otp(
             email=email,
-            otp_code=otp_code,
+            otp_code=hashed_otp,
             expires_at=expires_at,
-            purpose="registration"
+            purpose=otp_record.get("purpose", "registration") if otp_record else "registration",
+            registration_data=reg_data
         )
         if not saved:
             logger.error(f"[Auth API] /send-otp database save failure: db.save_otp returned False for '{email}'")
@@ -365,9 +404,21 @@ async def verify_reset_otp(data: OTPVerify, db = Depends(get_db)):
             raise HTTPException(status_code=404, detail="User not found")
             
         otp_record = db.get_otp(email)
-        if not otp_record or otp_record.get("otp_code") != data.otp or otp_record.get("purpose") != "password_reset":
+        if not otp_record:
+            raise HTTPException(status_code=400, detail="No verification code found. Please request a new one.")
+            
+        # Check attempts
+        attempts = otp_record.get("attempts", 0) + 1
+        db.db.collection("otp_verifications").document(email).update({"attempts": attempts})
+        if attempts > 5:
+            db.delete_otp_record(email)
+            raise HTTPException(status_code=400, detail="Maximum verification attempts exceeded. Please try again.")
+            
+        import hashlib
+        hashed_input = hashlib.sha256(data.otp.encode()).hexdigest()
+        if otp_record.get("otp_code") != hashed_input or otp_record.get("purpose") != "password_reset":
             logger.warning(f"[Auth API] /verify-reset-otp validation failure: invalid OTP/purpose for '{email}'")
-            raise HTTPException(status_code=400, detail="Invalid OTP")
+            raise HTTPException(status_code=400, detail=f"Invalid verification code. Attempt {attempts} of 5.")
             
         expires_at_str = otp_record.get("expires_at")
         expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
@@ -396,8 +447,13 @@ async def reset_password(data: ResetPassword, db = Depends(get_db)):
             raise HTTPException(status_code=404, detail="User not found.")
             
         otp_record = db.get_otp(email)
+        if not otp_record:
+            raise HTTPException(status_code=400, detail="Verification expired or invalid. Please request a new code.")
+            
         # Re-verify the OTP one last time
-        if not otp_record or otp_record.get("otp_code") != data.otp or otp_record.get("purpose") != "password_reset":
+        import hashlib
+        hashed_input = hashlib.sha256(data.otp.encode()).hexdigest()
+        if otp_record.get("otp_code") != hashed_input or otp_record.get("purpose") != "password_reset":
             logger.warning(f"[Auth API] /reset-password validation failure: invalid or expired OTP for '{email}'")
             raise HTTPException(status_code=400, detail="Verification expired or invalid. Please request a new code.")
             

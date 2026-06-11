@@ -104,7 +104,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             ),
           );
           // Auto-login and go to Dashboard
-          Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+          Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
         }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
