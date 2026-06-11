@@ -356,6 +356,9 @@ class AuthProvider extends ChangeNotifier {
         createdAt: DateTime.now(),
       );
     }
+    // Immediately fetch full profile from /user/me so storage_limit_mb: 20
+    // and live stats always reflect the server's authoritative values.
+    refreshStats();
   }
 
   Future<bool> sendResetOtp(String email) async {

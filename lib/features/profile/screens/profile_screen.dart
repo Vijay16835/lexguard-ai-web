@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -23,12 +24,25 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  Timer? _refreshTimer;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Immediate refresh on open
       context.read<AuthProvider>().refreshStats();
+      // Auto-refresh every 30 seconds so storage stays in sync
+      _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (mounted) context.read<AuthProvider>().refreshStats();
+      });
     });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   @override
