@@ -31639,7 +31639,7 @@ if(m==null)m=0
 l=g.h(a,"storage_used_mb")
 l=J.aZV(l==null?0:l)
 k=g.h(a,"storage_limit_mb")
-k=J.aZV(k==null?10:k)
+k=J.aZV(k==null?20:k)
 j=g.h(a,h)!=null?A.aVj(g.h(a,h)):new A.cJ(Date.now(),0,!1)
 i=g.h(a,"is_verified")
 if(i==null)i=!1
@@ -106044,7 +106044,7 @@ n=n==null?null:J.bK(n)
 if(n==null)n=""
 p=c==null?"User":c
 o=b==null?"user@example.com":b
-q.d=new A.Kp(n,p,o,"Legal Professional",d,"Free",0,0,0,10,new A.cJ(Date.now(),0,!1),!1,0)}return A.o(null,r)}})
+q.d=new A.Kp(n,p,o,"Legal Professional",d,"Free",0,0,0,20,new A.cJ(Date.now(),0,!1),!1,0)}return A.o(null,r)}})
 return A.p($async$tO,r)},
 lz(a){return this.a9o(a)},
 a9o(a){var s=0,r=A.q(t.y),q,p=2,o=[],n=this,m,l,k,j
@@ -109592,7 +109592,7 @@ p=A.x("Storage Usage",f,f,f,A.w().$3$color$fontSize$fontWeight($.t?B.u:B.m,13,B.
 o=q?f:B.d.af(s.x,1)
 if(o==null)o="0.0"
 n=q?f:B.d.af(s.y,0)
-if(n==null)n="10"
+if(n==null)n="20"
 p=A.ax(A.b([p,A.x(o+" MB / "+n+" MB",f,f,f,A.w().$3$color$fontSize$fontWeight($.t?B.l:B.n,11,B.a9),f,f)],k),B.q,B.bE,B.f,0)
 o=A.a8(4)
 n=q?f:B.d.ev(s.x/s.y,0,1)
