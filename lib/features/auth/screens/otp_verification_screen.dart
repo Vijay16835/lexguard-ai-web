@@ -107,13 +107,17 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
         }
       } else {
+        final errorMsg = auth.errorMessage ?? 'Invalid or expired OTP';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(auth.errorMessage ?? 'Invalid or expired OTP'),
+            content: Text(errorMsg),
             backgroundColor: AppColors.error,
             behavior: SnackBarBehavior.floating,
           ),
         );
+        if (errorMsg.contains('18 years old')) {
+          Navigator.pop(context);
+        }
       }
     } catch (e) {
       debugPrint('Exception thrown');

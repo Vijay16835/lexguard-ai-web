@@ -21,6 +21,8 @@ class _SignupScreenState extends State<SignupScreen> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _confirmPassCtrl = TextEditingController();
+  final _dobCtrl = TextEditingController();
+  DateTime? _selectedDate;
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
   bool _agreedToTerms = false;
@@ -44,7 +46,37 @@ class _SignupScreenState extends State<SignupScreen> {
     _emailCtrl.dispose();
     _passCtrl.dispose();
     _confirmPassCtrl.dispose();
+    _dobCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? DateTime.now().subtract(const Duration(days: 365 * 18)),
+      firstDate: DateTime(1900),
+      lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.dark(
+              primary: AppColors.gold,
+              onPrimary: Colors.black,
+              surface: AppColors.cardDark,
+              onSurface: AppColors.textPrimary,
+            ),
+            dialogBackgroundColor: AppColors.background,
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null && picked != _selectedDate) {
+      setState(() {
+        _selectedDate = picked;
+        _dobCtrl.text = "${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}";
+      });
+    }
   }
 
   Future<void> _signUp() async {
@@ -67,7 +99,7 @@ class _SignupScreenState extends State<SignupScreen> {
     final auth = context.read<AuthProvider>();
     try {
       final success = await auth.signUp(
-          _nameCtrl.text.trim(), _emailCtrl.text.trim(), _passCtrl.text);
+          _nameCtrl.text.trim(), _emailCtrl.text.trim(), _passCtrl.text, _dobCtrl.text.trim());
       
       if (!mounted) return;
 
@@ -268,6 +300,33 @@ class _SignupScreenState extends State<SignupScreen> {
               return null;
             },
           ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.2, end: 0),
+
+          const SizedBox(height: 16),
+
+          // Date of Birth
+          CustomTextField(
+            controller: _dobCtrl,
+            label: 'Date of Birth',
+            hint: 'Select your date of birth',
+            icon: Icons.calendar_today_outlined,
+            readOnly: true,
+            onTap: () => _selectDate(context),
+            validator: (v) {
+              if (v == null || v.isEmpty) return 'Date of Birth is required';
+              if (_selectedDate != null) {
+                final today = DateTime.now();
+                int age = today.year - _selectedDate!.year;
+                if (today.month < _selectedDate!.month ||
+                    (today.month == _selectedDate!.month && today.day < _selectedDate!.day)) {
+                  age--;
+                }
+                if (age < 18) {
+                  return 'You must be at least 18 years old to create an account';
+                }
+              }
+              return null;
+            },
+          ).animate(delay: 320.ms).fadeIn().slideY(begin: 0.2, end: 0),
 
           const SizedBox(height: 20),
 

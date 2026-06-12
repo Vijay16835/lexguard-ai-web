@@ -67,7 +67,7 @@ void main() {
   testWidgets('ForgotPasswordScreen Flow - Unregistered Email', (WidgetTester tester) async {
     final mockAuth = MockAuthProvider();
     mockAuth.sendResetOtpResult = false;
-    mockAuth.mockErrorMessage = 'Email not registered. Please create an account.';
+    mockAuth.mockErrorMessage = 'Email is not registered.';
 
     await tester.pumpWidget(
       ChangeNotifierProvider<AuthProvider>.value(
@@ -99,11 +99,11 @@ void main() {
     // Settle to see the state change in UI
     await tester.pumpAndSettle();
 
-    // Verify error panel with unregistered message is displayed
-    expect(find.text('Email not registered. Please create an account.'), findsOneWidget);
+    // Verify error panel and snackbar with unregistered message are displayed
+    expect(find.text('Email is not registered.'), findsNWidgets(2));
     
-    // Verify actions: Register Now and Back to Login
-    expect(find.widgetWithText(ElevatedButton, 'Register Now'), findsOneWidget);
+    // Verify actions: Create Account and Back to Login
+    expect(find.widgetWithText(ElevatedButton, 'Create Account'), findsOneWidget);
     expect(find.widgetWithText(OutlinedButton, 'Back to Login'), findsOneWidget);
   });
 }

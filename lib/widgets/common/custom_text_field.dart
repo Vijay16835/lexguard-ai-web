@@ -11,6 +11,9 @@ class CustomTextField extends StatelessWidget {
   final Widget? suffixIcon;
   final TextInputType? keyboardType;
   final String? Function(String?)? validator;
+  final VoidCallback? onTap;
+  final bool readOnly;
+  final bool? showCursor;
 
   const CustomTextField({
     super.key,
@@ -22,6 +25,9 @@ class CustomTextField extends StatelessWidget {
     this.suffixIcon,
     this.keyboardType,
     this.validator,
+    this.onTap,
+    this.readOnly = false,
+    this.showCursor,
   });
 
   @override
@@ -31,6 +37,9 @@ class CustomTextField extends StatelessWidget {
       obscureText: obscureText,
       keyboardType: keyboardType,
       validator: validator,
+      onTap: onTap,
+      readOnly: readOnly,
+      showCursor: showCursor,
       style: GoogleFonts.inter(fontSize: 14, color: AppColors.textPrimary),
       decoration: InputDecoration(
         labelText: label,

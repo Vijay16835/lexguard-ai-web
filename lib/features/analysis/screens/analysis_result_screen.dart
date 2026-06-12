@@ -159,8 +159,11 @@ class _AnalysisResultScreenState extends State<AnalysisResultScreen> {
                 style: GoogleFonts.inter(
                     fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.error)),
             const SizedBox(height: 8),
-            Text('The document could not be analyzed.',
-                style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary)),
+            Text(
+              doc['error_message'] ?? 'The document could not be analyzed.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(fontSize: 14, color: AppColors.textSecondary),
+            ),
           ],
         ),
       );

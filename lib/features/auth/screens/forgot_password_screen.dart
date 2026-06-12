@@ -76,6 +76,24 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             setState(() {
               _isEmailNotRegistered = true;
             });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Email is not registered.'),
+                backgroundColor: Colors.redAccent,
+                behavior: SnackBarBehavior.floating,
+                action: SnackBarAction(
+                  label: 'Create Account',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    Navigator.pushReplacementNamed(
+                      context,
+                      '/signup',
+                      arguments: {'email': email},
+                    );
+                  },
+                ),
+              ),
+            );
           } else {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -100,6 +118,24 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           setState(() {
             _isEmailNotRegistered = true;
           });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Email is not registered.'),
+              backgroundColor: Colors.redAccent,
+              behavior: SnackBarBehavior.floating,
+              action: SnackBarAction(
+                label: 'Create Account',
+                textColor: Colors.white,
+                onPressed: () {
+                  Navigator.pushReplacementNamed(
+                    context,
+                    '/signup',
+                    arguments: {'email': email},
+                  );
+                },
+              ),
+            ),
+          );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -226,7 +262,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: Text(
-                                    'Email not registered. Please create an account.',
+                                    'Email is not registered.',
                                     style: GoogleFonts.inter(
                                       fontSize: 16,
                                       fontWeight: FontWeight.w700,
@@ -251,7 +287,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
                       const SizedBox(height: 32),
 
-                      // Display two actions: Register Now and Back to Login
+                      // Display two actions: Create Account and Back to Login
                       Row(
                         children: [
                           Expanded(
@@ -296,7 +332,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                 ),
                               ),
                               child: Text(
-                                'Register Now',
+                                'Create Account',
                                 style: GoogleFonts.inter(
                                   fontSize: 15,
                                   fontWeight: FontWeight.w700,

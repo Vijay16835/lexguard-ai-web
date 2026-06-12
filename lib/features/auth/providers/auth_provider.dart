@@ -105,14 +105,14 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<bool> signUp(String name, String email, String password) async {
+  Future<bool> signUp(String name, String email, String password, String dateOfBirth) async {
     _authState = AuthState.loading;
     _errorMessage = null;
     notifyListeners();
     debugPrint('AuthProvider: Starting signup for $email');
 
     try {
-      final result = await _authService.signUp(name, email, password);
+      final result = await _authService.signUp(name, email, password, dateOfBirth);
       debugPrint('AuthProvider: Signup API result: ${result['success']}');
       
       if (result['success']) {

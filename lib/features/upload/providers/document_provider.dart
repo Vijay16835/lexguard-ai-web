@@ -60,11 +60,14 @@ class DocumentProvider extends ChangeNotifier {
       if (result['success']) {
         final docData = result['data']['document'];
         _uploadingDocId = docData['id'];
+        debugPrint('[FILE_UPLOADED] File uploaded successfully: ${docData['name']} (ID: ${docData['id']})');
+        
         // Add to local list immediately
         _documents.insert(0, docData);
         notifyListeners();
 
         // Start polling for analysis status
+        debugPrint('[ANALYSIS_STARTED] Polling started for document: ${docData['id']}');
         _pollAnalysisStatus(docData['id']);
 
         _isUploading = false;
@@ -108,10 +111,12 @@ class DocumentProvider extends ChangeNotifier {
           _documents[index]['status'] = status;
           _documents[index]['risk_score'] = result['data']['risk_score'];
           _documents[index]['risk_level'] = result['data']['risk_level'];
+          _documents[index]['error_message'] = result['data']['error_message'];
           notifyListeners();
         }
 
         if (status == 'completed' || status == 'failed') {
+          debugPrint('[ANALYSIS_COMPLETED] Analysis finished for document $docId with status: $status');
           t.cancel();
           _activeTimers.remove(t);
           _uploadingDocId = null;

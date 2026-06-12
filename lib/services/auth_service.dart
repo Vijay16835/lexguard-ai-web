@@ -40,7 +40,7 @@ class AuthService {
     }
   }
 
-  Future<Map<String, dynamic>> signUp(String name, String email, String password) async {
+  Future<Map<String, dynamic>> signUp(String name, String email, String password, String dateOfBirth) async {
     try {
       final response = await _api.post(
         ApiConstants.signup,
@@ -48,6 +48,7 @@ class AuthService {
           'full_name': name,
           'email': email,
           'password': password,
+          'date_of_birth': dateOfBirth,
         },
       );
       return {'success': true, 'data': response.data};

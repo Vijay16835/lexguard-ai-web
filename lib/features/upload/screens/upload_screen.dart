@@ -31,6 +31,7 @@ class _UploadScreenState extends State<UploadScreen> {
     if (result != null) {
       final file = result.files.single;
       final double sizeInMB = file.size / (1024 * 1024);
+      debugPrint('[FILE_SELECTED] Selected file: ${file.name}, size: ${sizeInMB.toStringAsFixed(2)} MB');
       setState(() {
         _selectedPlatformFile = file;
         _fileName = file.name;
