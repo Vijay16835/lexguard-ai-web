@@ -100,10 +100,11 @@ async def run_ai_analysis(document_id: str):
             
             # Step 4: Validate Before AI Analysis
             MIN_TEXT_LENGTH = 10
-            if not extracted_text or not extracted_text.strip():
-                raise TextExtractionError("Unable to extract readable text from document.")
-            if len(extracted_text.strip()) < MIN_TEXT_LENGTH:
-                raise TextExtractionError("Unable to extract readable text from document.")
+            if not extracted_text or not extracted_text.strip() or len(extracted_text.strip()) < MIN_TEXT_LENGTH:
+                if file_ext in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
+                    raise TextExtractionError("No readable text found in image.")
+                else:
+                    raise TextExtractionError("Unable to extract readable text from document.")
         except TextExtractionError as ete:
             error_reason = str(ete)
             update_document_status(db, document_id, "failed", error_reason)

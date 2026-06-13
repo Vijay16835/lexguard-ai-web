@@ -116,54 +116,144 @@ def extract_text_from_txt(file_path: str) -> str:
         raise TextExtractionError("Unsupported file structure") from e
 
 
+def preprocess_image(file_path: str) -> str:
+    """
+    Preprocess the image before running OCR.
+    Steps:
+      1. Resize if image is too large (max dimension > 2000px)
+      2. Convert to grayscale
+      3. Increase contrast using CLAHE
+      4. Denoise using fastNlMeansDenoising
+    Saves to a temporary file and returns its path.
+    """
+    import cv2
+    import numpy as np
+    import tempfile
+    
+    # Read image
+    img = cv2.imread(file_path)
+    if img is None:
+        raise TextExtractionError("Unable to read image file.")
+        
+    # 1. Resize large images (keeps aspect ratio)
+    h, w = img.shape[:2]
+    max_dim = 2000
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        
+    # 2. Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # 3. Increase contrast using CLAHE (Contrast Limited Adaptive Histogram Equalization)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    contrast = clahe.apply(gray)
+    
+    # 4. Denoise image (milder strength to prevent smudging thin fonts)
+    denoised = cv2.fastNlMeansDenoising(contrast, None, h=3, templateWindowSize=7, searchWindowSize=21)
+    
+    # Save to a temporary file
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        temp_path = tmp.name
+        
+    cv2.imwrite(temp_path, denoised)
+    return temp_path
+
+
 def extract_text_from_image(file_path: str) -> str:
-    """Extract text from images using OCR (EasyOCR or pytesseract)."""
-    text = ""
+    """Extract text from images using OCR (EasyOCR or pytesseract) with preprocessing and confidence validation."""
+    print("[IMAGE] Image received")
     print("[OCR] OCR started")
     
-    # Try EasyOCR first
+    preprocessed_path = None
+    ocr_target_path = file_path
+    try:
+        preprocessed_path = preprocess_image(file_path)
+        ocr_target_path = preprocessed_path
+    except Exception as pe:
+        print(f"Image preprocessing warning: {pe}")
+        
+    text = ""
     easyocr_failed = False
+    
+    # Try EasyOCR first
     try:
         import easyocr
         reader = easyocr.Reader(['en'], gpu=False)
-        results = reader.readtext(file_path, detail=0)
-        text = "\n".join(results)
-        if text.strip():
-            print("[OCR] OCR completed")
-            return text.strip()
+        # detail=1 returns bounding box, text, and confidence score
+        results = reader.readtext(ocr_target_path, detail=1)
+        
+        if results:
+            confidences = [res[2] for res in results]
+            texts = [res[1] for res in results]
+            
+            # Check average confidence
+            avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+            LOW_CONFIDENCE_THRESHOLD = 0.40
+            if avg_confidence < LOW_CONFIDENCE_THRESHOLD:
+                raise TextExtractionError("Image quality too low for analysis.")
+                
+            text = "\n".join(texts)
+    except TextExtractionError:
+        # Re-raise explicit quality error
+        raise
     except Exception as e:
         print(f"EasyOCR failed: {e}")
         easyocr_failed = True
     
-    # Fallback to pytesseract
-    try:
-        from app.core.config import settings
-        import pytesseract
-        from PIL import Image
-        
-        # Set tesseract path if it exists
-        if os.path.exists(settings.TESSERACT_CMD):
-            pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
+    # Fallback to pytesseract if EasyOCR failed or returned empty text
+    if (easyocr_failed or not text.strip()):
+        try:
+            from app.core.config import settings
+            import pytesseract
+            from PIL import Image
             
-        img = Image.open(file_path)
-        text = pytesseract.image_to_string(img)
-        if text.strip():
-            print("[OCR] OCR completed")
-            return text.strip()
-    except ImportError as ie:
-        print("Neither EasyOCR nor pytesseract is installed. OCR unavailable.")
-        if easyocr_failed:
-            raise TextExtractionError("OCR extraction failed") from ie
-    except Exception as e:
-        print(f"Pytesseract failed: {e}")
-        if easyocr_failed:
-            raise TextExtractionError("OCR extraction failed") from e
+            # Set tesseract path if it exists
+            if os.path.exists(settings.TESSERACT_CMD):
+                pytesseract.pytesseract.tesseract_cmd = settings.TESSERACT_CMD
+                
+            img = Image.open(ocr_target_path)
+            
+            # Simple quality/confidence validation check for pytesseract
+            try:
+                data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                confidences = [float(c) for c in data['conf'] if c != '-1' and c != -1]
+                if confidences:
+                    avg_confidence = sum(confidences) / (len(confidences) * 100.0) # Scale 0-100 to 0-1
+                    LOW_CONFIDENCE_THRESHOLD = 0.40
+                    if avg_confidence < LOW_CONFIDENCE_THRESHOLD:
+                        raise TextExtractionError("Image quality too low for analysis.")
+            except TextExtractionError:
+                raise
+            except Exception as t_conf_err:
+                print(f"Pytesseract confidence check warning: {t_conf_err}")
+                
+            text = pytesseract.image_to_string(img)
+        except TextExtractionError:
+            raise
+        except ImportError as ie:
+            print("Neither EasyOCR nor pytesseract is installed. OCR unavailable.")
+            if easyocr_failed:
+                raise TextExtractionError("OCR extraction failed") from ie
+        except Exception as e:
+            print(f"Pytesseract failed: {e}")
+            if easyocr_failed:
+                raise TextExtractionError("OCR extraction failed") from e
     
-    if not text.strip():
-        raise TextExtractionError("OCR extraction failed")
+    # Clean up preprocessed file
+    if preprocessed_path and os.path.exists(preprocessed_path):
+        try:
+            os.remove(preprocessed_path)
+        except Exception as remove_err:
+            print(f"Failed to remove temporary preprocessed image: {remove_err}")
+            
+    stripped_text = text.strip()
+    if not stripped_text:
+        raise TextExtractionError("No readable text found in image.")
         
     print("[OCR] OCR completed")
-    return text.strip()
+    print(f"[OCR] Extracted text length = {len(stripped_text)}")
+    return stripped_text
 
 
 def ocr_pdf(file_path: str) -> str:

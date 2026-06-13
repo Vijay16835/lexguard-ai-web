@@ -32,16 +32,41 @@ def generate_text_pdf(path, text):
     c.showPage()
     c.save()
 
+def get_test_font(size=24):
+    from PIL import ImageFont
+    for font_name in ["arial.ttf", "Arial.ttf", "LiberationSans-Regular.ttf", "DejaVuSans.ttf"]:
+        try:
+            return ImageFont.truetype(font_name, size)
+        except Exception:
+            continue
+    try:
+        return ImageFont.truetype("C:\\Windows\\Fonts\\arial.ttf", size)
+    except Exception:
+        pass
+    return None
+
 def generate_scanned_pdf(path, text):
-    img = Image.new('RGB', (600, 800), color=(255, 255, 255))
+    img = Image.new('RGB', (800, 1000), color=(255, 255, 255))
     d = ImageDraw.Draw(img)
-    d.text((50, 50), text, fill=(0, 0, 0))
-    img.save(path, "PDF", resolution=100.0)
+    font = get_test_font(24)
+    if font:
+        d.text((50, 50), text, fill=(0, 0, 0), font=font)
+    else:
+        for ox in range(2):
+            for oy in range(2):
+                d.text((50 + ox, 50 + oy), text, fill=(0, 0, 0))
+    img.save(path, "PDF", resolution=150.0)
 
 def generate_image(path, text):
     img = Image.new('RGB', (800, 600), color=(255, 255, 255))
     d = ImageDraw.Draw(img)
-    d.text((50, 50), text, fill=(0, 0, 0))
+    font = get_test_font(24)
+    if font:
+        d.text((50, 50), text, fill=(0, 0, 0), font=font)
+    else:
+        for ox in range(2):
+            for oy in range(2):
+                d.text((50 + ox, 50 + oy), text, fill=(0, 0, 0))
     img.save(path)
 
 def download_legacy_doc(path):
