@@ -39,7 +39,7 @@ def signup_user(db, user_in: UserCreate):
     access_token = create_access_token(subject=user.id)
     return user, access_token
 
-def login_user(db, user_in: UserLogin):
+def login_user(db, user_in: UserLogin, device_info: Optional[str] = None, ip_address: Optional[str] = None):
     """Authenticate email & password via Firestore lookup."""
     email = user_in.email.lower().strip()
     logger.info(f"[AuthService] login_user called for email: {email}")
@@ -60,6 +60,13 @@ def login_user(db, user_in: UserLogin):
         
     user = User(**user_data)
     access_token = create_access_token(subject=user.id)
+    
+    # Save login entry to record history
+    try:
+        db.save_login_entry(user.id, user.email, device_info=device_info, ip_address=ip_address)
+    except Exception as le:
+        logger.error(f"[AuthService] Failed to record login history: {le}")
+        
     logger.info(f"[AuthService] login success for: {user.id}")
     return user, access_token
 
@@ -92,7 +99,7 @@ def _verify_firebase_id_token(id_token: str) -> Optional[dict]:
         return None
 
 
-def authenticate_google_user(db, google_in: GoogleAuthSchema):
+def authenticate_google_user(db, google_in: GoogleAuthSchema, device_info: Optional[str] = None, ip_address: Optional[str] = None):
     """
     Authenticate a Google Sign-In user against Firestore (acting as PostgreSQL layer).
 
@@ -182,5 +189,12 @@ def authenticate_google_user(db, google_in: GoogleAuthSchema):
 
     user = User(**user_data)
     access_token = create_access_token(subject=user.id)
+    
+    # Save login entry to record history
+    try:
+        db.save_login_entry(user.id, user.email, device_info=device_info, ip_address=ip_address)
+    except Exception as le:
+        logger.error(f"[AuthService] Failed to record google login history: {le}")
+        
     logger.info(f"[AuthService] Issued JWT for user id={user.id}")
     return user, access_token

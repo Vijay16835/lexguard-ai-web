@@ -160,6 +160,20 @@ class FirebaseService:
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth VARCHAR(50);")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER;")
                 cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS error_message TEXT;")
+                
+                # Auto-migrate login_history table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS login_history (
+                        id SERIAL PRIMARY KEY,
+                        user_id VARCHAR(255) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        email VARCHAR(255) NOT NULL,
+                        login_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        device_info VARCHAR(255),
+                        ip_address VARCHAR(100)
+                    );
+                """)
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_login_history_user_id ON login_history (user_id);")
+                
                 conn.commit()
                 logger.info("[Database Service] PostgreSQL schema migration complete.")
             except Exception as schema_err:
@@ -443,6 +457,58 @@ class FirebaseService:
         except Exception as e:
             logger.error(f"Error updating password for {user_id}: {e}")
             return False
+
+    def save_login_entry(self, user_id: str, email: str, device_info: Optional[str] = None, ip_address: Optional[str] = None) -> bool:
+        """Save a new login entry to both Firestore and PostgreSQL with required logging."""
+        print("[LOGIN] User authenticated")
+        logger.info("[LOGIN] User authenticated")
+        
+        print("[LOGIN] Saving login history")
+        logger.info("[LOGIN] Saving login history")
+
+        firestore_success = False
+        try:
+            login_data = {
+                "user_id": user_id,
+                "email": email.lower().strip(),
+                "login_time": datetime.now(timezone.utc).isoformat(),
+                "device_info": device_info,
+                "ip_address": ip_address
+            }
+            self.db.collection("login_history").add(login_data)
+            firestore_success = True
+        except Exception as e:
+            logger.error(f"Error saving login entry to Firestore: {e}")
+
+        pg_success = False
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO login_history (user_id, email, login_time, device_info, ip_address)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (
+                    user_id,
+                    email.lower().strip(),
+                    datetime.now(timezone.utc),
+                    device_info,
+                    ip_address
+                ))
+                conn.commit()
+                pg_success = True
+                cur.close()
+                conn.close()
+            except Exception as pg_err:
+                logger.error(f"PostgreSQL error in save_login_entry: {pg_err}")
+                if conn:
+                    conn.close()
+
+        if firestore_success or pg_success:
+            print("[LOGIN] Login history saved")
+            logger.info("[LOGIN] Login history saved")
+            return True
+        return False
 
     # -------------------------------------------------------------
     # OTP operations

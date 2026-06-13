@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.auth import UserCreate, UserLogin, Token, OTPVerify, ForgotPassword, ResetPassword, GoogleAuth, SendOTP, ChangePassword
@@ -74,10 +74,13 @@ async def signup(user_in: UserCreate, background_tasks: BackgroundTasks, db = De
 
 
 @router.post("/login", response_model=Token)
-async def login(user_in: UserLogin, db = Depends(get_db)):
+async def login(request: Request, user_in: UserLogin, db = Depends(get_db)):
     print(f"[Auth API] login request for email: {user_in.email}")
     try:
-        user, access_token = login_user(db, user_in)
+        ip_address = request.client.host if request.client else None
+        device_info = request.headers.get("user-agent")
+        
+        user, access_token = login_user(db, user_in, device_info=device_info, ip_address=ip_address)
         print(f"[Auth API] login success for user id: {user.id}")
         
         created_at_val = None
@@ -118,10 +121,13 @@ async def login(user_in: UserLogin, db = Depends(get_db)):
 
 
 @router.post("/google-auth", response_model=Token)
-async def google_auth_endpoint(google_in: GoogleAuth, db = Depends(get_db)):
+async def google_auth_endpoint(request: Request, google_in: GoogleAuth, db = Depends(get_db)):
     print(f"[Auth API] google-auth request for email: {google_in.email}")
     try:
-        user, access_token = authenticate_google_user(db, google_in)
+        ip_address = request.client.host if request.client else None
+        device_info = request.headers.get("user-agent")
+        
+        user, access_token = authenticate_google_user(db, google_in, device_info=device_info, ip_address=ip_address)
         print(f"[Auth API] google-auth success for user id: {user.id}")
         
         created_at_val = None
