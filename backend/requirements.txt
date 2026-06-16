@@ -7,7 +7,7 @@ pydantic[email]
 pydantic-settings
 python-jose[cryptography]
 passlib[bcrypt]
-bcrypt==4.3.0
+bcrypt==3.2.0
 python-multipart
 python-dotenv
 PyPDF2

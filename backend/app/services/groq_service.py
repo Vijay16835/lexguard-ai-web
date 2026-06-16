@@ -20,30 +20,55 @@ class GroqService:
         }
 
     async def _call_groq(self, messages: list, temperature: float = 0.3, max_tokens: int = 4096) -> str:
-        """Make a request to Groq API and return the response text."""
+        """Make a request to Groq API and return the response text with retry on 429/timeouts."""
         payload = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                response = await client.post(
-                    GROQ_API_URL,
-                    headers=self.headers,
-                    json=payload,
-                )
-                response.raise_for_status()
-                data = response.json()
-                return data["choices"][0]["message"]["content"]
-        except httpx.HTTPStatusError as e:
-            print(f"Groq API HTTP error: {e.response.status_code} - {e.response.text}")
-            raise Exception(f"Groq API error: {e.response.status_code}")
-        except Exception as e:
-            print(f"Groq API call failed: {e}")
-            traceback.print_exc()
-            raise
+        
+        import asyncio
+        import httpx
+        
+        backoffs = [0, 1, 2, 4, 8]  # Delays: Attempt 1 (0s), 2 (1s), 3 (2s), 4 (4s), 5 (8s)
+        max_attempts = len(backoffs)
+        
+        for attempt_idx, delay in enumerate(backoffs):
+            attempt_num = attempt_idx + 1
+            if delay > 0:
+                print(f"[Groq Service] Waiting {delay} seconds before attempt {attempt_num}...")
+                await asyncio.sleep(delay)
+                
+            try:
+                print(f"[Groq Service] Attempt {attempt_num}/{max_attempts} for Groq call...")
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    response = await client.post(
+                        GROQ_API_URL,
+                        headers=self.headers,
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    return data["choices"][0]["message"]["content"]
+            except httpx.HTTPStatusError as e:
+                status_code = e.response.status_code
+                print(f"Groq API HTTP error (Attempt {attempt_num}/{max_attempts}): {status_code} - {e.response.text}")
+                
+                # Check if error is retryable (429, 5xx)
+                is_retryable = (status_code == 429) or (500 <= status_code < 600)
+                
+                if not is_retryable or attempt_num == max_attempts:
+                    raise Exception(f"Groq API error: {status_code}")
+            except (httpx.TimeoutException, httpx.RequestError) as e:
+                print(f"Groq API network/timeout error (Attempt {attempt_num}/{max_attempts}): {e}")
+                if attempt_num == max_attempts:
+                    raise
+            except Exception as e:
+                print(f"Groq API unexpected error (Attempt {attempt_num}/{max_attempts}): {e}")
+                traceback.print_exc()
+                if attempt_num == max_attempts:
+                    raise
 
     async def analyze_document(self, text: str) -> dict:
         """Full legal document analysis — summary, risks, clauses, recommendations."""

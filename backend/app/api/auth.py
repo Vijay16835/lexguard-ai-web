@@ -402,9 +402,12 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         logger.info(f"[SEND_RESET_OTP] OTP generated: '{otp_code}' for '{email}'")
         
+        import hashlib
+        hashed_otp = hashlib.sha256(otp_code.encode()).hexdigest()
+        
         saved = db.save_otp(
             email=email,
-            otp_code=otp_code,
+            otp_code=hashed_otp,
             expires_at=expires_at,
             purpose="password_reset"
         )
