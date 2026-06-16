@@ -58,14 +58,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               behavior: SnackBarBehavior.floating,
             ),
           );
-          Navigator.push(
+          Navigator.pushNamed(
             context,
-            MaterialPageRoute(
-              builder: (_) => OtpVerificationScreen(
-                email: email,
-                isPasswordReset: true,
-              ),
-            ),
+            '/otp-verification',
+            arguments: {
+              'email': email,
+              'purpose': 'password_reset',
+            },
           );
         }
       } else {

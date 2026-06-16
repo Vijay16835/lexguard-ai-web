@@ -41,6 +41,7 @@ void main() {
           theme: ThemeData(useMaterial3: false),
           routes: {
             '/signup': (context) => const SignupScreen(),
+            '/otp-verification': (context) => const Scaffold(body: Text('OtpVerificationScreen')),
           },
           home: const ForgotPasswordScreen(),
         ),
@@ -62,6 +63,10 @@ void main() {
     // Verify it called sendResetOtp with the email
     expect(mockAuth.sendResetOtpCalled, isTrue);
     expect(mockAuth.lastCheckedEmail, 'user@example.com');
+
+    // Settle navigator animations and verify navigation occurred
+    await tester.pumpAndSettle();
+    expect(find.text('OtpVerificationScreen'), findsOneWidget);
   });
 
   testWidgets('ForgotPasswordScreen Flow - Unregistered Email', (WidgetTester tester) async {
@@ -76,6 +81,7 @@ void main() {
           theme: ThemeData(useMaterial3: false),
           routes: {
             '/signup': (context) => const SignupScreen(),
+            '/otp-verification': (context) => const Scaffold(body: Text('OtpVerificationScreen')),
           },
           home: const ForgotPasswordScreen(),
         ),
