@@ -602,7 +602,11 @@ class _ChatScreenState extends State<ChatScreen> {
           leading: IconButton(
             onPressed: () {
               tts.stop();
-              if (Navigator.canPop(context)) Navigator.pop(context);
+              if (Navigator.canPop(context)) {
+                Navigator.pop(context);
+              } else {
+                Navigator.pushReplacementNamed(context, '/home');
+              }
             },
             icon: Container(
               padding: const EdgeInsets.all(8),

@@ -21,3 +21,4 @@ numpy==1.26.4
 Pillow==10.4.0
 supabase
 psycopg2-binary
+legacy-doc

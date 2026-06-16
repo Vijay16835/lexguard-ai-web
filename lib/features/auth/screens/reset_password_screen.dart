@@ -36,6 +36,9 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     super.initState();
     _token = widget.otp;
     _emailCtrl.text = widget.email ?? '';
+    _passCtrl.addListener(() {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -186,9 +189,15 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                         if (v == null || v.isEmpty) return 'Password is required';
                         if (v.length < 8) return 'Must be at least 8 characters';
                         if (utf8.encode(v).length > 72) return 'Password cannot exceed 72 bytes';
+                        final regex = RegExp(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$');
+                        if (!regex.hasMatch(v)) {
+                          return 'Password does not meet complexity requirements';
+                        }
                         return null;
                       },
                     ).animate(delay: 150.ms).fadeIn(),
+                    const SizedBox(height: 8),
+                    _buildPasswordValidationRules(_passCtrl.text),
                     const SizedBox(height: 16),
                     CustomTextField(
                       controller: _confirmPassCtrl,
@@ -240,6 +249,49 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildPasswordValidationRules(String value) {
+    bool hasMinLength = value.length >= 8;
+    bool hasUppercase = RegExp(r'[A-Z]').hasMatch(value);
+    bool hasLowercase = RegExp(r'[a-z]').hasMatch(value);
+    bool hasDigits = RegExp(r'\d').hasMatch(value);
+    bool hasSpecial = RegExp(r'[@$!%*?&]').hasMatch(value);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildValidationItem('Minimum 8 characters', hasMinLength),
+        _buildValidationItem('Contains uppercase letter', hasUppercase),
+        _buildValidationItem('Contains lowercase letter', hasLowercase),
+        _buildValidationItem('Contains number', hasDigits),
+        _buildValidationItem('Contains special character (@\$!%*?&)', hasSpecial),
+      ],
+    );
+  }
+
+  Widget _buildValidationItem(String text, bool isValid) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
+      child: Row(
+        children: [
+          Icon(
+            isValid ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+            size: 16,
+            color: isValid ? AppColors.success : AppColors.textHint,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            text,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              color: isValid ? AppColors.textPrimary : AppColors.textSecondary,
+              fontWeight: isValid ? FontWeight.w500 : FontWeight.normal,
+            ),
+          ),
+        ],
       ),
     );
   }
