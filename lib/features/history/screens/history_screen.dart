@@ -12,7 +12,6 @@ import 'package:lexguard_ai/features/analysis/screens/analysis_result_screen.dar
 import 'package:lexguard_ai/features/auth/providers/auth_provider.dart';
 import 'package:lexguard_ai/features/profile/providers/profile_provider.dart';
 import 'package:lexguard_ai/widgets/common/desktop_design_system.dart';
-import 'package:intl/intl.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
@@ -154,7 +153,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
 
     if (isDesktop) {
-      // Desktop Premium Table Layout
+      // Desktop Premium Card Grid Layout
       return Scaffold(
         backgroundColor: AppColors.background,
         body: Padding(
@@ -182,9 +181,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
 
-              // Table Body
+              // Grid Body
               Expanded(
                 child: history.isLoading
                     ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
@@ -202,80 +201,30 @@ class _HistoryScreenState extends State<HistoryScreen> {
                                   context.read<HistoryProvider>().setRiskFilter(null);
                                 },
                               )
-                            : DashboardCard(
-                                padding: EdgeInsets.zero,
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Column(
-                                    children: [
-                                      // Table Header Row
-                                      Container(
-                                        color: AppColors.cardMid,
-                                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                                        child: Row(
-                                          children: [
-                                            Expanded(
-                                                flex: 4,
-                                                child: Text('Document',
-                                                    style: GoogleFonts.inter(
-                                                        fontSize: 12,
-                                                        fontWeight: FontWeight.bold,
-                                                        color: AppColors.textSecondary))),
-                                            Expanded(
-                                                flex: 2,
-                                                child: Text('Size & Type',
-                                                    style: GoogleFonts.inter(
-                                                        fontSize: 12,
-                                                        fontWeight: FontWeight.bold,
-                                                        color: AppColors.textSecondary))),
-                                            Expanded(
-                                                flex: 2,
-                                                child: Text('Upload Date',
-                                                    style: GoogleFonts.inter(
-                                                        fontSize: 12,
-                                                        fontWeight: FontWeight.bold,
-                                                        color: AppColors.textSecondary))),
-                                            Expanded(
-                                                flex: 2,
-                                                child: Text('Risk Assessment',
-                                                    style: GoogleFonts.inter(
-                                                        fontSize: 12,
-                                                        fontWeight: FontWeight.bold,
-                                                        color: AppColors.textSecondary))),
-                                            Container(
-                                                width: 120,
-                                                alignment: Alignment.centerRight,
-                                                child: Text('Actions',
-                                                    style: GoogleFonts.inter(
-                                                        fontSize: 12,
-                                                        fontWeight: FontWeight.bold,
-                                                        color: AppColors.textSecondary))),
-                                          ],
-                                        ),
-                                      ),
-                                      const Divider(height: 1),
-
-                                      // Scrollable Table Rows
-                                      Expanded(
-                                        child: ListView.builder(
-                                          itemCount: history.documents.length,
-                                          itemBuilder: (context, idx) {
-                                            final doc = history.documents[idx];
-                                            return _DesktopTableRow(
-                                              document: doc,
-                                              onTap: () => Navigator.push(
-                                                context,
-                                                MaterialPageRoute(
-                                                    builder: (_) => AnalysisResultScreen(documentId: doc.id)),
-                                              ),
-                                              onActionMenu: () => _showDocumentActions(context, doc),
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                    ],
-                                  ),
+                            : GridView.builder(
+                                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: screenWidth >= 1600
+                                      ? 3
+                                      : (screenWidth >= 1200 ? 2 : 1),
+                                  crossAxisSpacing: 20,
+                                  mainAxisSpacing: 8,
+                                  childAspectRatio: screenWidth >= 1600 ? 1.55 : 1.45,
                                 ),
+                                itemCount: history.documents.length,
+                                itemBuilder: (context, idx) {
+                                  final doc = history.documents[idx];
+                                  return DocumentCard(
+                                    document: doc,
+                                    showDelete: true,
+                                    onTap: () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                          builder: (_) => AnalysisResultScreen(documentId: doc.id)),
+                                    ),
+                                    onMore: () => _showDocumentActions(context, doc),
+                                    onDelete: () => _deleteDoc(context, doc),
+                                  );
+                                },
                               ),
               ),
             ],
@@ -331,14 +280,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                               itemCount: history.documents.length,
                               itemBuilder: (context, i) {
                                 final doc = history.documents[i];
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 10),
-                                  child: DocumentCard(
-                                    document: doc,
-                                    showDelete: true,
-                                    onTap: () => _showDocumentActions(context, doc),
-                                    onDelete: () => _deleteDoc(context, doc),
+                                return DocumentCard(
+                                  document: doc,
+                                  showDelete: true,
+                                  onTap: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) => AnalysisResultScreen(documentId: doc.id)),
                                   ),
+                                  onMore: () => _showDocumentActions(context, doc),
+                                  onDelete: () => _deleteDoc(context, doc),
                                 );
                               },
                             ),
@@ -601,129 +552,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 }
 
-// Stateful Table Row with hover highlights for desktop
-class _DesktopTableRow extends StatefulWidget {
-  final DocumentModel document;
-  final VoidCallback onTap;
-  final VoidCallback onActionMenu;
-
-  const _DesktopTableRow({
-    required this.document,
-    required this.onTap,
-    required this.onActionMenu,
-  });
-
-  @override
-  State<_DesktopTableRow> createState() => _DesktopTableRowState();
-}
-
-class _DesktopTableRowState extends State<_DesktopTableRow> {
-  bool _isHovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final doc = widget.document;
-    final String formattedDate = DateFormat('MMM dd, yyyy').format(doc.uploadedAt);
-
-    IconData typeIcon = Icons.insert_drive_file_outlined;
-    if (doc.type == DocumentType.pdf) typeIcon = Icons.picture_as_pdf_outlined;
-    if (doc.type == DocumentType.docx) typeIcon = Icons.description_outlined;
-    if (doc.type == DocumentType.image) typeIcon = Icons.image_outlined;
-
-    return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          decoration: BoxDecoration(
-            color: _isHovered ? AppColors.border.withValues(alpha: 0.15) : Colors.transparent,
-            border: Border(bottom: BorderSide(color: AppColors.border, width: 0.5)),
-          ),
-          child: Row(
-            children: [
-              // Column 1: Document Details
-              Expanded(
-                flex: 4,
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: AppColors.cardMid,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: Icon(typeIcon, color: AppColors.gold, size: 20),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Text(
-                        doc.name,
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: _isHovered ? AppColors.gold : AppColors.textPrimary,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Column 2: Size & Type
-              Expanded(
-                flex: 2,
-                child: Text(
-                  '${doc.sizeInMB.toStringAsFixed(1)} MB • ${doc.typeLabel}',
-                  style: GoogleFonts.inter(fontSize: 13, color: AppColors.textSecondary),
-                ),
-              ),
-
-              // Column 3: Date Uploaded
-              Expanded(
-                flex: 2,
-                child: Text(
-                  formattedDate,
-                  style: GoogleFonts.inter(fontSize: 13, color: AppColors.textSecondary),
-                ),
-              ),
-
-              // Column 4: Risk assessment
-              Expanded(
-                flex: 2,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: StatusChip(
-                    label: doc.riskLabel,
-                    color: doc.riskColor,
-                  ),
-                ),
-              ),
-
-              // Column 5: Action Popup Trigger
-              Container(
-                width: 120,
-                alignment: Alignment.centerRight,
-                child: IconButton(
-                  icon: const Icon(Icons.more_vert_rounded),
-                  color: AppColors.textHint,
-                  hoverColor: AppColors.gold.withValues(alpha: 0.1),
-                  onPressed: widget.onActionMenu,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _ActionItem extends StatelessWidget {
   final IconData icon;
