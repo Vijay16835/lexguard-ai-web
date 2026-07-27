@@ -43,6 +43,9 @@ class BrevoEmailService:
     @staticmethod
     def _send_email_via_smtp(email: str, subject: str, text_content: str, html_content: str) -> bool:
         """Sends transactional email using SMTP with TLS/STARTTLS, auth, and timeout."""
+        print("Starting SMTP...")
+        logger.info("Starting SMTP...")
+
         smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
         smtp_port_str = os.getenv("SMTP_PORT") or getattr(settings, "SMTP_PORT", "587")
         smtp_port = int(smtp_port_str) if smtp_port_str else 587
@@ -54,8 +57,8 @@ class BrevoEmailService:
         from email.mime.text import MIMEText
         from email.mime.multipart import MIMEMultipart
 
-        print("Connecting to SMTP...")
-        logger.info("Connecting to SMTP...")
+        print("Connecting...")
+        logger.info("Connecting...")
 
         msg = MIMEMultipart("alternative")
         msg["From"] = from_email
@@ -75,8 +78,8 @@ class BrevoEmailService:
             server.starttls()
             
             server.login(smtp_email, smtp_password)
-            print("SMTP Login Successful")
-            logger.info("SMTP Login Successful")
+            print("SMTP Login Success")
+            logger.info("SMTP Login Success")
 
             print("Sending Email...")
             logger.info("Sending Email...")
@@ -85,8 +88,8 @@ class BrevoEmailService:
             print(f"SMTP Response: {response}")
             logger.info(f"SMTP Response: {response}")
 
-            print("Email Accepted")
-            logger.info("Email Accepted")
+            print("Email Sent Successfully")
+            logger.info("Email Sent Successfully")
             server.quit()
             return True
         except Exception as e:
