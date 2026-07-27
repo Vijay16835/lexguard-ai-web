@@ -11,41 +11,58 @@ class BrevoEmailService:
     def validate_configuration() -> bool:
         """Validate email configuration on startup."""
         provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
-        logger.info(f"[Email Service] Validating email configuration on startup. Provider: {provider}")
+        smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
+        smtp_port = os.getenv("SMTP_PORT") or getattr(settings, "SMTP_PORT", "")
+        smtp_email = os.getenv("SMTP_EMAIL") or getattr(settings, "SMTP_EMAIL", "")
+        email_from = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
+        
+        smtp_password_configured = bool(os.getenv("SMTP_PASSWORD") or getattr(settings, "SMTP_PASSWORD", ""))
+        brevo_api_key_configured = bool(os.getenv("BREVO_API_KEY") or getattr(settings, "BREVO_API_KEY", ""))
+        
+        logger.info("[Email Service] Startup configuration validation values:")
+        print("[Email Service] Startup configuration validation values:")
+        logger.info(f"  EMAIL_PROVIDER: {provider}")
+        print(f"  EMAIL_PROVIDER: {provider}")
+        logger.info(f"  SMTP_SERVER: {smtp_server}")
+        print(f"  SMTP_SERVER: {smtp_server}")
+        logger.info(f"  SMTP_PORT: {smtp_port}")
+        print(f"  SMTP_PORT: {smtp_port}")
+        logger.info(f"  SMTP_EMAIL: {smtp_email}")
+        print(f"  SMTP_EMAIL: {smtp_email}")
+        logger.info(f"  EMAIL_FROM: {email_from}")
+        print(f"  EMAIL_FROM: {email_from}")
+        logger.info(f"  SMTP_PASSWORD configured: {smtp_password_configured}")
+        print(f"  SMTP_PASSWORD configured: {smtp_password_configured}")
+        logger.info(f"  BREVO_API_KEY configured: {brevo_api_key_configured}")
+        print(f"  BREVO_API_KEY configured: {brevo_api_key_configured}")
         
         if provider == "console":
             logger.info("[Email Service] Startup validation successful: Console Email Logger is configured.")
             return True
             
         if provider == "smtp":
-            smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
-            smtp_email = os.getenv("SMTP_EMAIL") or getattr(settings, "SMTP_EMAIL", "")
-            if not smtp_server or not smtp_email:
+            if not smtp_server or not smtp_email or not smtp_password_configured:
                 logger.critical("[Email Service] Startup validation failed: SMTP settings are not fully configured!")
                 return False
             logger.info(f"[Email Service] Startup validation successful: SMTP is configured. Server: {smtp_server}")
             return True
         
-        api_key = os.getenv("BREVO_API_KEY") or getattr(settings, "BREVO_API_KEY", "")
-        from_email = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
-        
-        if not api_key:
-            logger.critical("[Email Service] Startup validation failed: BREVO_API_KEY is not configured!")
-            return False
+        if provider == "brevo_api":
+            if not brevo_api_key_configured:
+                logger.critical("[Email Service] Startup validation failed: BREVO_API_KEY is not configured!")
+                return False
+            if not email_from:
+                logger.critical("[Email Service] Startup validation failed: EMAIL_FROM (verified sender) is not configured!")
+                return False
+            logger.info(f"[Email Service] Startup validation successful: Brevo REST API is configured. Sender: {email_from}")
+            return True
             
-        if not from_email:
-            logger.critical("[Email Service] Startup validation failed: EMAIL_FROM (verified sender) is not configured!")
-            return False
-            
-        logger.info(f"[Email Service] Startup validation successful: Brevo REST API is configured. Sender: {from_email}")
-        return True
+        logger.critical(f"[Email Service] Startup validation failed: Unknown provider '{provider}'!")
+        return False
 
     @staticmethod
     def _send_email_via_smtp(email: str, subject: str, text_content: str, html_content: str) -> bool:
         """Sends transactional email using SMTP with TLS/STARTTLS, auth, and timeout."""
-        print("Starting SMTP...")
-        logger.info("Starting SMTP...")
-
         smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
         smtp_port_str = os.getenv("SMTP_PORT") or getattr(settings, "SMTP_PORT", "587")
         smtp_port = int(smtp_port_str) if smtp_port_str else 587
@@ -57,8 +74,8 @@ class BrevoEmailService:
         from email.mime.text import MIMEText
         from email.mime.multipart import MIMEMultipart
 
-        print("Connecting...")
-        logger.info("Connecting...")
+        logger.info(f"SMTP Connection: Connecting to {smtp_server}:{smtp_port}...")
+        print(f"SMTP Connection: Connecting to {smtp_server}:{smtp_port}...")
 
         msg = MIMEMultipart("alternative")
         msg["From"] = from_email
@@ -71,34 +88,49 @@ class BrevoEmailService:
         msg.attach(part2)
 
         try:
-            # 10s connection timeout
+            # Connect
             server = smtplib.SMTP(smtp_server, smtp_port, timeout=10.0)
+            logger.info("SMTP Connection: Connected successfully.")
+            print("SMTP Connection: Connected successfully.")
             
             # STARTTLS
+            logger.info("TLS Started: Initiating STARTTLS...")
+            print("TLS Started: Initiating STARTTLS...")
             server.starttls()
+            logger.info("TLS Started: STARTTLS handshake complete.")
+            print("TLS Started: STARTTLS handshake complete.")
             
+            # Login
+            logger.info(f"Login: Attempting login for {smtp_email}...")
+            print(f"Login: Attempting login for {smtp_email}...")
             server.login(smtp_email, smtp_password)
-            print("SMTP Login Success")
-            logger.info("SMTP Login Success")
+            logger.info("Login Success: SMTP Authenticated successfully.")
+            print("Login Success: SMTP Authenticated successfully.")
 
-            print("Sending Email...")
-            logger.info("Sending Email...")
-            
+            # Sendmail
+            logger.info(f"Sending Email: From {from_email} to {email}...")
+            print(f"Sending Email: From {from_email} to {email}...")
             response = server.sendmail(from_email, [email], msg.as_string())
-            print(f"SMTP Response: {response}")
-            logger.info(f"SMTP Response: {response}")
+            logger.info(f"Sendmail Response: {response}")
+            print(f"Sendmail Response: {response}")
 
-            print("Email Sent Successfully")
+            # Quit
+            logger.info("Quit: Closing SMTP connection...")
+            print("Quit: Closing SMTP connection...")
+            quit_status = server.quit()
+            logger.info(f"Quit Status: {quit_status}")
+            print(f"Quit Status: {quit_status}")
+            
             logger.info("Email Sent Successfully")
-            server.quit()
+            print("Email Sent Successfully")
             return True
         except Exception as e:
-            print("Email Failed")
             logger.error("Email Failed")
+            print("Email Failed")
+            logger.error("Exception Stacktrace:", exc_info=True)
             print("Exception Stacktrace:")
             import traceback
             traceback.print_exc()
-            logger.error("Exception Stacktrace:", exc_info=True)
             raise e
 
     @staticmethod
@@ -106,24 +138,14 @@ class BrevoEmailService:
         """
         Sends transactional email using Brevo's REST API endpoint:
         https://api.brevo.com/v3/smtp/email
-        With exponential backoff retry, timeout, and detailed logging.
         """
-        provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
-        if provider == "console":
-            logger.info("\n" + "="*50)
-            logger.info(f" [CONSOLE EMAIL LOGGER] SENDING EMAIL")
-            logger.info(f" To: {email}")
-            logger.info(f" Subject: {subject}")
-            logger.info(f" Text Content: {text_content}")
-            logger.info("="*50 + "\n")
-            return True
-
         api_key = os.getenv("BREVO_API_KEY") or getattr(settings, "BREVO_API_KEY", "")
         from_email = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
         
         if not api_key:
             logger.error("[Brevo API] Cannot send email. BREVO_API_KEY is missing.")
-            return False
+            print("[Brevo API] Cannot send email. BREVO_API_KEY is missing.")
+            raise ValueError("BREVO_API_KEY is missing.")
             
         url = "https://api.brevo.com/v3/smtp/email"
         headers = {
@@ -139,40 +161,76 @@ class BrevoEmailService:
             "textContent": text_content
         }
         
+        logger.info("[Brevo API] Request started.")
+        print("[Brevo API] Request started.")
+        logger.info(f"API request payload: {payload}")
+        print(f"API request payload: {payload}")
+        
+        # Mask API key in headers output for logging
+        logged_headers = headers.copy()
+        logged_headers["api-key"] = "********"
+        logger.info(f"API request headers: {logged_headers}")
+        print(f"API request headers: {logged_headers}")
+        
         max_attempts = 4
         for attempt in range(1, max_attempts + 1):
             try:
-                logger.info(f"[Brevo API] Request started. Attempt {attempt}/{max_attempts} to send email to '{email}'")
+                logger.info(f"[Brevo API] Sending email (Attempt {attempt}/{max_attempts}) to '{email}'...")
+                print(f"[Brevo API] Sending email (Attempt {attempt}/{max_attempts}) to '{email}'...")
                 
                 with httpx.Client(timeout=10.0) as client:
                     response = client.post(url, json=payload, headers=headers)
                     
-                    logger.info(f"[Brevo API] Request completed. Response Code: {response.status_code}")
-                    logger.info(f"[Brevo API] Response Body: {response.text}")
+                    logger.info(f"HTTP Status Code: {response.status_code}")
+                    print(f"HTTP Status Code: {response.status_code}")
+                    logger.info(f"Response Body: {response.text}")
+                    print(f"Response Body: {response.text}")
                     
                     if response.status_code in (200, 201, 202):
                         logger.info(f"[Brevo API] Email successfully dispatched to '{email}' via Brevo REST API.")
+                        print(f"[Brevo API] Email successfully dispatched to '{email}' via Brevo REST API.")
                         return True
                     else:
-                        logger.error(f"[Brevo API] API Error Response: {response.status_code} - {response.text}")
+                        logger.error(f"Error Message: API Error Response: {response.status_code} - {response.text}")
+                        print(f"Error Message: API Error Response: {response.status_code} - {response.text}")
                         if response.status_code in (400, 401, 403):
                             raise RuntimeError(f"Brevo API Permanent Error: {response.status_code} - {response.text}")
                         response.raise_for_status()
             except Exception as e:
                 logger.error(f"[Brevo API] Exception during request (Attempt {attempt}/{max_attempts}): {type(e).__name__}: {str(e)}", exc_info=True)
+                print(f"[Brevo API] Exception during request (Attempt {attempt}/{max_attempts}): {type(e).__name__}: {str(e)}")
                 
                 if "Permanent Error" in str(e):
                     raise e
                     
                 if attempt == max_attempts:
                     logger.critical(f"[Brevo API] Failed to send email to '{email}' after {attempt} attempts. Final failure.")
+                    print(f"[Brevo API] Failed to send email to '{email}' after {attempt} attempts. Final failure.")
                     raise RuntimeError(f"Brevo API connection failure: {type(e).__name__}: {str(e)}") from e
                 
                 sleep_time = 1.0 * (2 ** (attempt - 1))
                 logger.info(f"[Brevo API] Retrying transient failure in {sleep_time}s...")
+                print(f"[Brevo API] Retrying transient failure in {sleep_time}s...")
                 time.sleep(sleep_time)
                 
         return False
+
+    @staticmethod
+    def _send_email_via_console(email: str, subject: str, text_content: str, html_content: str) -> bool:
+        logger.info("\n" + "="*50)
+        logger.info(f" [CONSOLE EMAIL LOGGER] SENDING EMAIL")
+        logger.info(f" To: {email}")
+        logger.info(f" Subject: {subject}")
+        logger.info(f" Text Content: {text_content}")
+        logger.info("="*50 + "\n")
+        
+        print("\n" + "="*50)
+        print(f" [CONSOLE EMAIL LOGGER] SENDING EMAIL")
+        print(f" To: {email}")
+        print(f" Subject: {subject}")
+        print(f" Text Content: {text_content}")
+        print("="*50 + "\n")
+        return True
 
     @staticmethod
     def send_otp_email(email: str, otp_code: str) -> bool:
@@ -205,8 +263,12 @@ class BrevoEmailService:
         provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
         if provider == "smtp":
             return BrevoEmailService._send_email_via_smtp(email, subject, text_content, html_content)
-        else:
+        elif provider == "brevo_api":
             return BrevoEmailService._send_brevo_api_request(email, subject, text_content, html_content)
+        elif provider == "console":
+            return BrevoEmailService._send_email_via_console(email, subject, text_content, html_content)
+        else:
+            raise ValueError(f"Unknown or unsupported email provider: '{provider}'")
 
     @staticmethod
     def send_password_reset_email(email: str, otp_code: str) -> bool:
@@ -240,8 +302,12 @@ class BrevoEmailService:
         provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
         if provider == "smtp":
             return BrevoEmailService._send_email_via_smtp(email, subject, text_content, html_content)
-        else:
+        elif provider == "brevo_api":
             return BrevoEmailService._send_brevo_api_request(email, subject, text_content, html_content)
+        elif provider == "console":
+            return BrevoEmailService._send_email_via_console(email, subject, text_content, html_content)
+        else:
+            raise ValueError(f"Unknown or unsupported email provider: '{provider}'")
 
     @staticmethod
     def run_smtp_diagnostics(recipient_email: str) -> dict:

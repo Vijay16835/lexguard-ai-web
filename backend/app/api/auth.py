@@ -383,36 +383,59 @@ def send_email_in_background(email: str, otp_code: str):
 @router.post("/send-reset-otp")
 async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks, db = Depends(get_db)):
     import time
+    import traceback
+    import os
+    from app.core.config import settings
+    
     start_time = time.time()
     email = data.email.lower().strip()
-    logger.info(f"[SEND_RESET_OTP] Email received: '{email}'")
-    logger.info(f"[SEND_RESET_OTP] Email checked: '{email}'")
     
+    steps = {
+        "RequestReceived": False,
+        "OTPGenerated": None,
+        "OTPSaved": False,
+        "EmailProviderSelected": None,
+        "EmailSendingStarted": False,
+        "ProviderResponse": None,
+        "EmailSuccessfullySent": False,
+        "ExactFailureReason": None
+    }
+    
+    logger.info(f"[SEND_RESET_OTP] Email received: '{email}'")
+    steps["RequestReceived"] = True
+    
+    def log_status_block():
+        block = (
+            "\n------------------------------------------------\n"
+            "Forgot Password Request Received\n"
+            f"OTP Generated: {steps['OTPGenerated'] if steps['OTPGenerated'] else 'PENDING'}\n"
+            f"OTP Saved: {'YES' if steps['OTPSaved'] else 'NO'}\n"
+            f"Email Provider Selected: {steps['EmailProviderSelected'] if steps['EmailProviderSelected'] else 'PENDING'}\n"
+            f"Email Sending Started: {'YES' if steps['EmailSendingStarted'] else 'NO'}\n"
+            f"Provider Response: {steps['ProviderResponse'] if steps['ProviderResponse'] else 'PENDING'}\n"
+            f"Email Successfully Sent: {'YES' if steps['EmailSuccessfullySent'] else 'NO'}\n"
+            f"Exact Failure Reason: {steps['ExactFailureReason'] if steps['ExactFailureReason'] else 'NONE'}\n"
+            "------------------------------------------------\n"
+        )
+        logger.info(block)
+        print(block)
+
     try:
         user_data = db.get_user_by_email(email)
         if not user_data:
-            logger.warning(f"[SEND_RESET_OTP] User not found: Email '{email}' is not registered in the database.")
-            logger.info(f"[SEND_RESET_OTP] OTP not sent: User for email '{email}' is not found.")
+            steps["ExactFailureReason"] = f"User with email '{email}' is not registered."
+            log_status_block()
             raise HTTPException(status_code=404, detail="Email is not registered.")
-        
-        logger.info(f"[SEND_RESET_OTP] User found: Email '{email}' exists.")
-        
-        # TASK 4 Logging
-        print("Generating OTP...")
-        logger.info("Generating OTP...")
         
         # Generate OTP
         otp_code = "".join(random.choices(string.digits, k=6))
+        steps["OTPGenerated"] = "GENERATED"
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-        logger.info(f"[SEND_RESET_OTP] OTP generated: '{otp_code}' for '{email}'")
         
         import hashlib
         hashed_otp = hashlib.sha256(otp_code.encode()).hexdigest()
         
-        # TASK 4 Logging
-        print("Saving OTP...")
-        logger.info("Saving OTP...")
-        
+        # Save OTP
         saved = db.save_otp(
             email=email,
             otp_code=hashed_otp,
@@ -420,40 +443,80 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
             purpose="password_reset"
         )
         if not saved:
-            logger.error(f"[SEND_RESET_OTP] Database save failure: db.save_otp returned False for '{email}'")
-            logger.info(f"[SEND_RESET_OTP] OTP not sent: Failed to save to database for '{email}'.")
+            steps["OTPSaved"] = False
+            steps["ExactFailureReason"] = "Failed to save verification code to the database."
+            log_status_block()
             raise HTTPException(status_code=500, detail="Failed to save password reset code to database.")
-        logger.info(f"[SEND_RESET_OTP] OTP stored in database")
         
-        # Call email service synchronously
-        logger.info(f"[SEND_RESET_OTP] Sending password reset email synchronously to '{email}'...")
+        steps["OTPSaved"] = True
+        
+        provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
+        steps["EmailProviderSelected"] = provider
+        
+        # Log all env variables except secrets
+        smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
+        smtp_port = os.getenv("SMTP_PORT") or getattr(settings, "SMTP_PORT", "")
+        smtp_email = os.getenv("SMTP_EMAIL") or getattr(settings, "SMTP_EMAIL", "")
+        email_from = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
+        smtp_password_configured = bool(os.getenv("SMTP_PASSWORD") or getattr(settings, "SMTP_PASSWORD", ""))
+        brevo_api_key_configured = bool(os.getenv("BREVO_API_KEY") or getattr(settings, "BREVO_API_KEY", ""))
+        
+        env_vars_log = (
+            f"[ENV VARS CHECK]\n"
+            f"  EMAIL_PROVIDER: {provider}\n"
+            f"  SMTP_SERVER: {smtp_server}\n"
+            f"  SMTP_PORT: {smtp_port}\n"
+            f"  SMTP_EMAIL: {smtp_email}\n"
+            f"  EMAIL_FROM: {email_from}\n"
+            f"  SMTP_PASSWORD configured: {smtp_password_configured}\n"
+            f"  BREVO_API_KEY configured: {brevo_api_key_configured}"
+        )
+        logger.info(env_vars_log)
+        print(env_vars_log)
+
+        steps["EmailSendingStarted"] = True
+        
         try:
             email_sent = email_service.send_password_reset_email(email, otp_code)
-            if not email_sent:
-                logger.error(f"[SEND_RESET_OTP] Email service returned False for '{email}'")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to send password reset OTP: Provider did not accept request."
-                )
+            if email_sent:
+                steps["EmailSuccessfullySent"] = True
+                steps["ProviderResponse"] = "Accepted/Success (200/201/202)"
+            else:
+                steps["EmailSuccessfullySent"] = False
+                steps["ExactFailureReason"] = "Email service returned False (unknown reason)."
+                steps["ProviderResponse"] = "Failed"
         except Exception as email_err:
-            logger.error(f"[SEND_RESET_OTP] Exception during email sending to '{email}': {str(email_err)}", exc_info=True)
-            print("Exception Stacktrace:")
-            import traceback
-            traceback.print_exc()
+            steps["EmailSuccessfullySent"] = False
+            steps["ExactFailureReason"] = f"{type(email_err).__name__}: {str(email_err)}"
+            steps["ProviderResponse"] = "Error/Exception"
+            raise email_err
+            
+        log_status_block()
+        
+        if not steps["EmailSuccessfullySent"]:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to send password reset OTP: {str(email_err)}"
+                detail=f"Failed to send password reset OTP: {steps['ExactFailureReason']}"
             )
             
-        logger.info(f"[SEND_RESET_OTP] OTP sent successfully to '{email}'")
         return {"success": True, "message": "Verification code sent to your email."}
-            
+        
     except HTTPException as he:
         raise he
     except Exception as e:
         duration = time.time() - start_time
-        logger.error(f"[SEND_RESET_OTP] Exception thrown in {duration:.4f} seconds: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error while generating reset OTP: {str(e)}")
+        tb = traceback.format_exc()
+        logger.error(f"[SEND_RESET_OTP] Exception thrown in {duration:.4f} seconds: {str(e)}\n{tb}")
+        print(f"[SEND_RESET_OTP] Exception thrown in {duration:.4f} seconds: {str(e)}\n{tb}")
+        
+        if not steps["EmailSuccessfullySent"] and not steps["ExactFailureReason"]:
+            steps["ExactFailureReason"] = f"Unexpected Error: {type(e).__name__}: {str(e)}"
+            log_status_block()
+            
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send password reset OTP: {steps['ExactFailureReason'] if steps['ExactFailureReason'] else str(e)}"
+        )
 
 
 @router.post("/verify-reset-otp")
