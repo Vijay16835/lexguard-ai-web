@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:lexguard_ai/core/theme/app_colors.dart';
 import 'package:lexguard_ai/features/upload/providers/document_provider.dart';
+import 'package:lexguard_ai/features/auth/providers/auth_provider.dart';
 import 'package:lexguard_ai/features/chat/screens/document_chat_screen.dart';
 
 class AnalysisResultScreen extends StatefulWidget {
