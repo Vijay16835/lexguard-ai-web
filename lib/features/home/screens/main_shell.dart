@@ -44,6 +44,9 @@ class _MainShellState extends State<MainShell> {
     // Map sidebar/nav index back to screen index
     final screenIndex = index < 2 ? index : index - 1;
     setState(() => _currentIndex = screenIndex);
+    if (screenIndex == 3) {
+      context.read<AuthProvider>().refreshStats();
+    }
   }
 
   String _getSectionTitle(int screenIndex) {
@@ -169,7 +172,10 @@ class _MainShellState extends State<MainShell> {
                       ),
                       // User Initials Avatar link to profile screen tab
                       GestureDetector(
-                        onTap: () => setState(() => _currentIndex = 3),
+                        onTap: () {
+                          setState(() => _currentIndex = 3);
+                          context.read<AuthProvider>().refreshStats();
+                        },
                         child: Container(
                           width: 40,
                           height: 40,

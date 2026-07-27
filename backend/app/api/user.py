@@ -17,34 +17,10 @@ from app.services.document_service import get_user_storage_usage_mb
 STORAGE_LIMIT_MB = 20.0
 
 def _get_user_stats_pg(user_id: str) -> dict:
-    """Query PostgreSQL for live document count, high-risk count, and AI chat count."""
-    stats = {"documents_analyzed": 0, "high_risk_count": 0, "ai_chat_count": 0}
-    conn = None
-    try:
-        from app.services.firebase_service import firebase_service
-        conn = firebase_service._get_pg_conn()
-        if conn:
-            cur = conn.cursor()
-            try:
-                cur.execute("SELECT COUNT(*) FROM documents WHERE user_id = %s", (user_id,))
-                stats["documents_analyzed"] = cur.fetchone()[0]
-                cur.execute(
-                    "SELECT COUNT(*) FROM documents WHERE user_id = %s AND risk_level = 'High'",
-                    (user_id,)
-                )
-                stats["high_risk_count"] = cur.fetchone()[0]
-                cur.execute("SELECT COUNT(*) FROM chat_history WHERE user_id = %s", (user_id,))
-                stats["ai_chat_count"] = cur.fetchone()[0]
-            finally:
-                cur.close()
-        else:
-            logger.error(f"Failed to obtain Postgres connection in _get_user_stats_pg for {user_id}")
-    except Exception as e:
-        logger.error(f"Failed to fetch user stats from PostgreSQL for {user_id}: {e}")
-    finally:
-        if conn:
-            conn.close()
-    return stats
+    """Query PostgreSQL with Firestore fallback for user stats."""
+    from app.services.firebase_service import firebase_service
+    return firebase_service.get_user_stats(user_id)
+
 
 @router.get("/me")
 async def get_profile(current_user: User = Depends(deps.get_current_user)):
@@ -61,7 +37,7 @@ async def get_profile(current_user: User = Depends(deps.get_current_user)):
     try:
         storage_used_mb = await asyncio.wait_for(
             asyncio.to_thread(get_user_storage_usage_mb, current_user.id),
-            timeout=2.0
+            timeout=5.0
         )
     except Exception as e:
         logger.warning(f"Timeout/Error fetching storage usage for user {current_user.id}: {e}")
@@ -71,7 +47,7 @@ async def get_profile(current_user: User = Depends(deps.get_current_user)):
     try:
         stats = await asyncio.wait_for(
             asyncio.to_thread(_get_user_stats_pg, current_user.id),
-            timeout=2.0
+            timeout=5.0
         )
     except Exception as e:
         logger.warning(f"Timeout/Error fetching user stats from Postgres for user {current_user.id}: {e}")
@@ -90,6 +66,40 @@ async def get_profile(current_user: User = Depends(deps.get_current_user)):
         "high_risk_count": stats["high_risk_count"],
         "ai_chat_count": stats["ai_chat_count"],
     }
+
+
+@router.get("/profile/stats")
+async def get_profile_stats(current_user: User = Depends(deps.get_current_user)):
+    """Fetch live stats for the current user (document count, high-risk count, chat count, storage used)."""
+    from app.services.firebase_service import firebase_service
+    import asyncio
+    
+    try:
+        stats = await asyncio.wait_for(
+            asyncio.to_thread(firebase_service.get_user_stats, current_user.id),
+            timeout=5.0
+        )
+    except Exception as e:
+        logger.warning(f"Timeout/Error fetching user stats for {current_user.id}: {e}")
+        stats = {"documents_analyzed": 0, "high_risk_count": 0, "ai_chat_count": 0}
+
+    try:
+        storage_used_mb = await asyncio.wait_for(
+            asyncio.to_thread(get_user_storage_usage_mb, current_user.id),
+            timeout=5.0
+        )
+    except Exception as e:
+        logger.warning(f"Timeout/Error fetching storage usage for user {current_user.id}: {e}")
+        storage_used_mb = 0.0
+
+    return {
+        "document_count": stats["documents_analyzed"],
+        "high_risk_count": stats["high_risk_count"],
+        "ai_chat_count": stats["ai_chat_count"],
+        "storage_used_mb": storage_used_mb,
+        "storage_limit_mb": STORAGE_LIMIT_MB
+    }
+
 
 @router.patch("/settings")
 async def update_settings(

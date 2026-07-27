@@ -249,23 +249,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
       // Desktop Premium Two-Column Layout
       return Scaffold(
         backgroundColor: AppColors.background,
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Left Column: Account Profile & Storage metrics
-              Expanded(
-                flex: 5,
-                child: accountCard.animate().fadeIn(duration: 400.ms),
-              ),
-              const SizedBox(width: 28),
-              // Right Column: Settings configuration buttons
-              Expanded(
-                flex: 7,
-                child: menuItems.animate(delay: 150.ms).fadeIn(),
-              ),
-            ],
+        body: RefreshIndicator(
+          onRefresh: () => auth.refreshStats(),
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(24),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Left Column: Account Profile & Storage metrics
+                Expanded(
+                  flex: 5,
+                  child: accountCard.animate().fadeIn(duration: 400.ms),
+                ),
+                const SizedBox(width: 28),
+                // Right Column: Settings configuration buttons
+                Expanded(
+                  flex: 7,
+                  child: menuItems.animate(delay: 150.ms).fadeIn(),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -274,8 +278,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // Mobile Layout fallback
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: SingleChildScrollView(
-        child: Column(
+      body: RefreshIndicator(
+        onRefresh: () => auth.refreshStats(),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
           children: [
             // Header gradient for mobile
             Container(
@@ -372,8 +379,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ],
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   void _showChangePasswordModal(BuildContext context) {
     showModalBottomSheet(

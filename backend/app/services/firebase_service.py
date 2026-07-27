@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 # every database operation.
 # ---------------------------------------------------------------------------
 _pg_pool = None
+_pool_init_attempted = False
 
 
 class _PgConnWrapper:
@@ -63,8 +64,9 @@ class _PgConnWrapper:
 
 def _get_pg_pool():
     """Lazily initialise and return the shared ThreadedConnectionPool."""
-    global _pg_pool
-    if _pg_pool is None:
+    global _pg_pool, _pool_init_attempted
+    if not _pool_init_attempted:
+        _pool_init_attempted = True
         try:
             import psycopg2.pool
             import urllib.parse
@@ -100,7 +102,7 @@ def _get_pg_pool():
             except Exception as parse_err:
                 logger.warning(f"[Database Service] Failed to parse/migrate DATABASE_URL: {parse_err}")
                 
-            _pg_pool = psycopg2.pool.ThreadedConnectionPool(2, 10, dsn=db_url)
+            _pg_pool = psycopg2.pool.ThreadedConnectionPool(2, 10, dsn=db_url, connect_timeout=1)
             logger.info("psycopg2 ThreadedConnectionPool initialised (min=2, max=10).")
         except Exception as e:
             logger.error(f"Failed to create psycopg2 pool: {e}")

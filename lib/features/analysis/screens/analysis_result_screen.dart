@@ -34,6 +34,9 @@ class _AnalysisResultScreenState extends State<AnalysisResultScreen> {
     final doc = provider.currentDocument;
     if (doc != null && (doc['status'] == 'completed' || doc['status'] == 'failed')) {
       setState(() => _isAnalyzing = false);
+      if (mounted) {
+        context.read<AuthProvider>().refreshStats();
+      }
     } else {
       // Start polling
       _pollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
@@ -47,6 +50,9 @@ class _AnalysisResultScreenState extends State<AnalysisResultScreen> {
             (updatedDoc['status'] == 'completed' || updatedDoc['status'] == 'failed')) {
           timer.cancel();
           setState(() => _isAnalyzing = false);
+          if (mounted) {
+            context.read<AuthProvider>().refreshStats();
+          }
         }
       });
     }
