@@ -9,12 +9,21 @@ logger = logging.getLogger(__name__)
 class BrevoEmailService:
     @staticmethod
     def validate_configuration() -> bool:
-        """Validate Brevo REST API configuration on startup (replaces SMTP connectivity check)."""
+        """Validate email configuration on startup."""
         provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
         logger.info(f"[Email Service] Validating email configuration on startup. Provider: {provider}")
         
         if provider == "console":
             logger.info("[Email Service] Startup validation successful: Console Email Logger is configured.")
+            return True
+            
+        if provider == "smtp":
+            smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
+            smtp_email = os.getenv("SMTP_EMAIL") or getattr(settings, "SMTP_EMAIL", "")
+            if not smtp_server or not smtp_email:
+                logger.critical("[Email Service] Startup validation failed: SMTP settings are not fully configured!")
+                return False
+            logger.info(f"[Email Service] Startup validation successful: SMTP is configured. Server: {smtp_server}")
             return True
         
         api_key = os.getenv("BREVO_API_KEY") or getattr(settings, "BREVO_API_KEY", "")
@@ -30,6 +39,64 @@ class BrevoEmailService:
             
         logger.info(f"[Email Service] Startup validation successful: Brevo REST API is configured. Sender: {from_email}")
         return True
+
+    @staticmethod
+    def _send_email_via_smtp(email: str, subject: str, text_content: str, html_content: str) -> bool:
+        """Sends transactional email using SMTP with TLS/STARTTLS, auth, and timeout."""
+        smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
+        smtp_port_str = os.getenv("SMTP_PORT") or getattr(settings, "SMTP_PORT", "587")
+        smtp_port = int(smtp_port_str) if smtp_port_str else 587
+        smtp_email = os.getenv("SMTP_EMAIL") or getattr(settings, "SMTP_EMAIL", "")
+        smtp_password = os.getenv("SMTP_PASSWORD") or getattr(settings, "SMTP_PASSWORD", "")
+        from_email = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
+
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        print("Connecting to SMTP...")
+        logger.info("Connecting to SMTP...")
+
+        msg = MIMEMultipart("alternative")
+        msg["From"] = from_email
+        msg["To"] = email
+        msg["Subject"] = subject
+
+        part1 = MIMEText(text_content, "plain")
+        part2 = MIMEText(html_content, "html")
+        msg.attach(part1)
+        msg.attach(part2)
+
+        try:
+            # 10s connection timeout
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=10.0)
+            
+            # STARTTLS
+            server.starttls()
+            
+            server.login(smtp_email, smtp_password)
+            print("SMTP Login Successful")
+            logger.info("SMTP Login Successful")
+
+            print("Sending Email...")
+            logger.info("Sending Email...")
+            
+            response = server.sendmail(from_email, [email], msg.as_string())
+            print(f"SMTP Response: {response}")
+            logger.info(f"SMTP Response: {response}")
+
+            print("Email Accepted")
+            logger.info("Email Accepted")
+            server.quit()
+            return True
+        except Exception as e:
+            print("Email Failed")
+            logger.error("Email Failed")
+            print("Exception Stacktrace:")
+            import traceback
+            traceback.print_exc()
+            logger.error("Exception Stacktrace:", exc_info=True)
+            raise e
 
     @staticmethod
     def _send_brevo_api_request(email: str, subject: str, text_content: str, html_content: str) -> bool:
@@ -72,14 +139,11 @@ class BrevoEmailService:
         max_attempts = 4
         for attempt in range(1, max_attempts + 1):
             try:
-                # 7. Log request started
                 logger.info(f"[Brevo API] Request started. Attempt {attempt}/{max_attempts} to send email to '{email}'")
                 
-                # 8. Timeout handling: 10 seconds maximum
                 with httpx.Client(timeout=10.0) as client:
                     response = client.post(url, json=payload, headers=headers)
                     
-                    # 7. Log completed, response code, response body
                     logger.info(f"[Brevo API] Request completed. Response Code: {response.status_code}")
                     logger.info(f"[Brevo API] Response Body: {response.text}")
                     
@@ -87,14 +151,11 @@ class BrevoEmailService:
                         logger.info(f"[Brevo API] Email successfully dispatched to '{email}' via Brevo REST API.")
                         return True
                     else:
-                        # 11. Return API errors directly to logs
                         logger.error(f"[Brevo API] API Error Response: {response.status_code} - {response.text}")
-                        # Permanent client errors (400, 401, 403) should not be retried
                         if response.status_code in (400, 401, 403):
                             raise RuntimeError(f"Brevo API Permanent Error: {response.status_code} - {response.text}")
                         response.raise_for_status()
             except Exception as e:
-                # Log traceback and root cause error directly
                 logger.error(f"[Brevo API] Exception during request (Attempt {attempt}/{max_attempts}): {type(e).__name__}: {str(e)}", exc_info=True)
                 
                 if "Permanent Error" in str(e):
@@ -104,7 +165,6 @@ class BrevoEmailService:
                     logger.critical(f"[Brevo API] Failed to send email to '{email}' after {attempt} attempts. Final failure.")
                     raise RuntimeError(f"Brevo API connection failure: {type(e).__name__}: {str(e)}") from e
                 
-                # 9. Retry mechanism with exponential backoff
                 sleep_time = 1.0 * (2 ** (attempt - 1))
                 logger.info(f"[Brevo API] Retrying transient failure in {sleep_time}s...")
                 time.sleep(sleep_time)
@@ -113,7 +173,7 @@ class BrevoEmailService:
 
     @staticmethod
     def send_otp_email(email: str, otp_code: str) -> bool:
-        logger.info(f"[Brevo API] Generating OTP email content for recipient: {email}")
+        logger.info(f"[Email Service] Generating OTP email content for recipient: {email}")
         subject = "LexGuard AI Verification Code"
         html_content = f"""
         <html>
@@ -138,11 +198,16 @@ class BrevoEmailService:
         </html>
         """
         text_content = f"Your LexGuard AI verification code is {otp_code}. This code expires in 5 minutes."
-        return BrevoEmailService._send_brevo_api_request(email, subject, text_content, html_content)
+        
+        provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
+        if provider == "smtp":
+            return BrevoEmailService._send_email_via_smtp(email, subject, text_content, html_content)
+        else:
+            return BrevoEmailService._send_brevo_api_request(email, subject, text_content, html_content)
 
     @staticmethod
     def send_password_reset_email(email: str, otp_code: str) -> bool:
-        logger.info(f"[Brevo API] Generating Password Reset email content for recipient: {email}")
+        logger.info(f"[Email Service] Generating Password Reset email content for recipient: {email}")
         subject = "LexGuard AI Password Reset OTP"
         html_content = f"""
         <html>
@@ -168,16 +233,108 @@ class BrevoEmailService:
         </html>
         """
         text_content = f"Your LexGuard AI password reset OTP is: {otp_code}"
-        return BrevoEmailService._send_brevo_api_request(email, subject, text_content, html_content)
+        
+        provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
+        if provider == "smtp":
+            return BrevoEmailService._send_email_via_smtp(email, subject, text_content, html_content)
+        else:
+            return BrevoEmailService._send_brevo_api_request(email, subject, text_content, html_content)
 
     @staticmethod
     def run_smtp_diagnostics(recipient_email: str) -> dict:
-        """Adapts SMTP connectivity diagnostics to verify REST API connectivity to api.brevo.com."""
+        """Runs diagnostics for configured email provider (SMTP or Brevo API)."""
         import socket
+        provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
         
+        if provider == "smtp":
+            import smtplib
+            from email.mime.text import MIMEText
+            from email.mime.multipart import MIMEMultipart
+            
+            smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
+            smtp_port_str = os.getenv("SMTP_PORT") or getattr(settings, "SMTP_PORT", "587")
+            smtp_port = int(smtp_port_str) if smtp_port_str else 587
+            smtp_email = os.getenv("SMTP_EMAIL") or getattr(settings, "SMTP_EMAIL", "")
+            smtp_password = os.getenv("SMTP_PASSWORD") or getattr(settings, "SMTP_PASSWORD", "")
+            from_email = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
+            
+            logger.info("[SMTP DIAGNOSTICS] Starting SMTP connectivity audit:")
+            logger.info(f"  Server: {smtp_server}")
+            logger.info(f"  Port: {smtp_port}")
+            logger.info(f"  Sender: {from_email}")
+            
+            dns_resolved = False
+            tcp_connected = False
+            smtp_authenticated = False
+            email_sent = False
+            provider_response = ""
+            
+            # DNS resolution
+            try:
+                ip_list = socket.getaddrinfo(smtp_server, smtp_port, socket.AF_INET, socket.SOCK_STREAM)
+                dns_resolved = True
+                logger.info(f"[SMTP DIAGNOSTICS] DNS lookup succeeded: {smtp_server} resolved to {[ip[4][0] for ip in ip_list]}")
+            except Exception as e:
+                logger.error(f"[SMTP DIAGNOSTICS] DNS failure: {str(e)}", exc_info=True)
+                raise RuntimeError(f"DNS failure resolving {smtp_server}: {str(e)}") from e
+                
+            # TCP connection
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(5.0)
+                sock.connect((smtp_server, smtp_port))
+                sock.close()
+                tcp_connected = True
+                logger.info(f"[SMTP DIAGNOSTICS] TCP handshake to {smtp_server}:{smtp_port} successful.")
+            except Exception as e:
+                logger.error(f"[SMTP DIAGNOSTICS] TCP connection failure: {str(e)}", exc_info=True)
+                raise ConnectionError(f"Network failure: TCP connection to {smtp_server}:{smtp_port} failed: {str(e)}") from e
+                
+            # SMTP authentication and sending
+            try:
+                server = smtplib.SMTP(smtp_server, smtp_port, timeout=10.0)
+                server.starttls()
+                server.login(smtp_email, smtp_password)
+                smtp_authenticated = True
+                logger.info("[SMTP DIAGNOSTICS] SMTP Authentication successful.")
+                
+                # Send test email
+                msg = MIMEMultipart()
+                msg["From"] = from_email
+                msg["To"] = recipient_email
+                msg["Subject"] = "LexGuard SMTP Diagnostic Test"
+                msg.attach(MIMEText("This is a diagnostic connection test email sent from the LexGuard AI backend SMTP diagnostics suite.", "plain"))
+                
+                send_resp = server.sendmail(from_email, [recipient_email], msg.as_string())
+                provider_response = str(send_resp)
+                email_sent = True
+                logger.info(f"[SMTP DIAGNOSTICS] Diagnostic email successfully sent. Response: {send_resp}")
+                server.quit()
+            except Exception as e:
+                logger.error(f"[SMTP DIAGNOSTICS] Exception during SMTP diagnosis: {str(e)}", exc_info=True)
+                raise e
+                
+            # Log formatted as requested
+            logger.info(
+                f"\n[SMTP TEST]\n"
+                f"Server: {smtp_server}\n"
+                f"Port: {smtp_port}\n"
+                f"Username: {smtp_email}\n"
+                f"Connection Successful: {tcp_connected}\n"
+                f"Authentication Successful: {smtp_authenticated}"
+            )
+            
+            return {
+                "smtp_connected": tcp_connected,
+                "smtp_authenticated": smtp_authenticated,
+                "email_sent": email_sent,
+                "provider_response": provider_response
+            }
+        
+        # Default: Brevo API Diagnostics
         url = "https://api.brevo.com/v3/smtp/email"
         api_key = os.getenv("BREVO_API_KEY") or getattr(settings, "BREVO_API_KEY", "")
-        from_email = settings.EMAIL_FROM or settings.SMTP_EMAIL
+        from_email = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
         
         logger.info("[BREVO REST API DIAGNOSTICS] Starting connectivity audit:")
         logger.info(f"  URL: {url}")
@@ -287,3 +444,4 @@ class BrevoEmailService:
 # Aliases to preserve application compatibility
 EmailService = BrevoEmailService
 email_service = BrevoEmailService()
+

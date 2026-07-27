@@ -397,6 +397,10 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
         
         logger.info(f"[SEND_RESET_OTP] User found: Email '{email}' exists.")
         
+        # TASK 4 Logging
+        print("Generating OTP...")
+        logger.info("Generating OTP...")
+        
         # Generate OTP
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
@@ -404,6 +408,10 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
         
         import hashlib
         hashed_otp = hashlib.sha256(otp_code.encode()).hexdigest()
+        
+        # TASK 4 Logging
+        print("Saving OTP...")
+        logger.info("Saving OTP...")
         
         saved = db.save_otp(
             email=email,
@@ -417,10 +425,27 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
             raise HTTPException(status_code=500, detail="Failed to save password reset code to database.")
         logger.info(f"[SEND_RESET_OTP] OTP stored in database")
         
-        # Send Password Reset OTP via email in the background
-        logger.info(f"[SEND_RESET_OTP] Dispatching email_service.send_password_reset_email in background to '{email}'...")
-        background_tasks.add_task(send_email_in_background, email, otp_code)
-        logger.info(f"[SEND_RESET_OTP] OTP sent: Password reset OTP dispatched for '{email}'.")
+        # Call email service synchronously
+        logger.info(f"[SEND_RESET_OTP] Sending password reset email synchronously to '{email}'...")
+        try:
+            email_sent = email_service.send_password_reset_email(email, otp_code)
+            if not email_sent:
+                logger.error(f"[SEND_RESET_OTP] Email service returned False for '{email}'")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to send password reset OTP: Provider did not accept request."
+                )
+        except Exception as email_err:
+            logger.error(f"[SEND_RESET_OTP] Exception during email sending to '{email}': {str(email_err)}", exc_info=True)
+            print("Exception Stacktrace:")
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to send password reset OTP: {str(email_err)}"
+            )
+            
+        logger.info(f"[SEND_RESET_OTP] OTP sent successfully to '{email}'")
         return {"success": True, "message": "Verification code sent to your email."}
             
     except HTTPException as he:
