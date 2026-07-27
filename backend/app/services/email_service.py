@@ -177,14 +177,16 @@ class BrevoEmailService:
             try:
                 logger.info(f"[Brevo API] Sending email (Attempt {attempt}/{max_attempts}) to '{email}'...")
                 print(f"[Brevo API] Sending email (Attempt {attempt}/{max_attempts}) to '{email}'...")
+                print("Sending request to Brevo...")
                 
                 with httpx.Client(timeout=10.0) as client:
                     response = client.post(url, json=payload, headers=headers)
                     
+                    print(f"Brevo Response: {response.status_code} {response.reason_phrase}")
+                    print(response.text)
+                    
                     logger.info(f"HTTP Status Code: {response.status_code}")
-                    print(f"HTTP Status Code: {response.status_code}")
                     logger.info(f"Response Body: {response.text}")
-                    print(f"Response Body: {response.text}")
                     
                     if response.status_code in (200, 201, 202):
                         logger.info(f"[Brevo API] Email successfully dispatched to '{email}' via Brevo REST API.")

@@ -390,11 +390,14 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
     start_time = time.time()
     email = data.email.lower().strip()
     
+    provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
+    print(f"EMAIL_PROVIDER = {provider}")
+    
     steps = {
-        "RequestReceived": False,
+        "RequestReceived": True,
         "OTPGenerated": None,
         "OTPSaved": False,
-        "EmailProviderSelected": None,
+        "EmailProviderSelected": provider,
         "EmailSendingStarted": False,
         "ProviderResponse": None,
         "EmailSuccessfullySent": False,
@@ -402,7 +405,6 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
     }
     
     logger.info(f"[SEND_RESET_OTP] Email received: '{email}'")
-    steps["RequestReceived"] = True
     
     def log_status_block():
         block = (
@@ -450,14 +452,11 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
         
         steps["OTPSaved"] = True
         
-        provider = (os.getenv("EMAIL_PROVIDER") or getattr(settings, "EMAIL_PROVIDER", "brevo_api")).lower().strip()
-        steps["EmailProviderSelected"] = provider
-        
         # Log all env variables except secrets
         smtp_server = os.getenv("SMTP_SERVER") or getattr(settings, "SMTP_SERVER", "")
         smtp_port = os.getenv("SMTP_PORT") or getattr(settings, "SMTP_PORT", "")
         smtp_email = os.getenv("SMTP_EMAIL") or getattr(settings, "SMTP_EMAIL", "")
-        email_from = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
+        sender = os.getenv("EMAIL_FROM") or getattr(settings, "EMAIL_FROM", "")
         smtp_password_configured = bool(os.getenv("SMTP_PASSWORD") or getattr(settings, "SMTP_PASSWORD", ""))
         brevo_api_key_configured = bool(os.getenv("BREVO_API_KEY") or getattr(settings, "BREVO_API_KEY", ""))
         
@@ -467,12 +466,17 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
             f"  SMTP_SERVER: {smtp_server}\n"
             f"  SMTP_PORT: {smtp_port}\n"
             f"  SMTP_EMAIL: {smtp_email}\n"
-            f"  EMAIL_FROM: {email_from}\n"
+            f"  EMAIL_FROM: {sender}\n"
             f"  SMTP_PASSWORD configured: {smtp_password_configured}\n"
             f"  BREVO_API_KEY configured: {brevo_api_key_configured}"
         )
         logger.info(env_vars_log)
         print(env_vars_log)
+        
+        print("Starting OTP email...")
+        print(f"Recipient: {email}")
+        print(f"Sender: {sender}")
+        print(f"Provider: {provider}")
 
         steps["EmailSendingStarted"] = True
         
@@ -481,10 +485,12 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
             if email_sent:
                 steps["EmailSuccessfullySent"] = True
                 steps["ProviderResponse"] = "Accepted/Success (200/201/202)"
+                print("OTP email successfully delivered.")
             else:
                 steps["EmailSuccessfullySent"] = False
                 steps["ExactFailureReason"] = "Email service returned False (unknown reason)."
                 steps["ProviderResponse"] = "Failed"
+                raise RuntimeError("Email service returned False (unknown reason).")
         except Exception as email_err:
             steps["EmailSuccessfullySent"] = False
             steps["ExactFailureReason"] = f"{type(email_err).__name__}: {str(email_err)}"
@@ -492,13 +498,6 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
             raise email_err
             
         log_status_block()
-        
-        if not steps["EmailSuccessfullySent"]:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to send password reset OTP: {steps['ExactFailureReason']}"
-            )
-            
         return {"success": True, "message": "Verification code sent to your email."}
         
     except HTTPException as he:
@@ -507,7 +506,7 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
         duration = time.time() - start_time
         tb = traceback.format_exc()
         logger.error(f"[SEND_RESET_OTP] Exception thrown in {duration:.4f} seconds: {str(e)}\n{tb}")
-        print(f"[SEND_RESET_OTP] Exception thrown in {duration:.4f} seconds: {str(e)}\n{tb}")
+        print(f"[SEND_RESET_OTP] Exception thrown in {duration:.4f} seconds: {str(e)}")
         
         if not steps["EmailSuccessfullySent"] and not steps["ExactFailureReason"]:
             steps["ExactFailureReason"] = f"Unexpected Error: {type(e).__name__}: {str(e)}"
@@ -515,7 +514,7 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
             
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to send password reset OTP: {steps['ExactFailureReason'] if steps['ExactFailureReason'] else str(e)}"
+            detail=f"{type(e).__name__}: {str(e)}"
         )
 
 

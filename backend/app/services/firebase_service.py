@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _pg_pool = None
 _pool_init_attempted = False
+_pool_init_error = None
 
 
 class _PgConnWrapper:
@@ -64,15 +65,14 @@ class _PgConnWrapper:
 
 def _get_pg_pool():
     """Lazily initialise and return the shared ThreadedConnectionPool."""
-    global _pg_pool, _pool_init_attempted
+    global _pg_pool, _pool_init_attempted, _pool_init_error
     if not _pool_init_attempted:
         _pool_init_attempted = True
         try:
             import psycopg2.pool
             import urllib.parse
-            db_url = os.getenv("DATABASE_URL") or settings.DATABASE_URL
-            if "Tvijay@1098" in db_url:
-                db_url = db_url.replace("Tvijay@1098", "Tvijay%401098")
+            # settings.DATABASE_URL is already parsed, validated, and sanitized
+            db_url = settings.DATABASE_URL
             
             # Auto-migrate direct connection to pooler connection string if needed
             try:
@@ -89,7 +89,11 @@ def _get_pg_pool():
                         username = f"{username}.{project_id}"
                         
                     password = parsed.password or ""
-                    netloc = f"{username}:{password}@{pooler_host}:{pooler_port}"
+                    # URL-encode password properly
+                    decoded_password = urllib.parse.unquote(password)
+                    encoded_password = urllib.parse.quote_plus(decoded_password)
+                    
+                    netloc = f"{username}:{encoded_password}@{pooler_host}:{pooler_port}"
                     db_url = urllib.parse.urlunparse((
                         parsed.scheme,
                         netloc,
@@ -102,10 +106,11 @@ def _get_pg_pool():
             except Exception as parse_err:
                 logger.warning(f"[Database Service] Failed to parse/migrate DATABASE_URL: {parse_err}")
                 
-            _pg_pool = psycopg2.pool.ThreadedConnectionPool(2, 10, dsn=db_url, connect_timeout=1)
+            _pg_pool = psycopg2.pool.ThreadedConnectionPool(2, 10, dsn=db_url, connect_timeout=5)
             logger.info("psycopg2 ThreadedConnectionPool initialised (min=2, max=10).")
         except Exception as e:
-            logger.error(f"Failed to create psycopg2 pool: {e}")
+            _pool_init_error = e
+            logger.error(f"Failed to create psycopg2 pool: {type(e).__name__}: {str(e)}")
     return _pg_pool
 
 # Initialize Firebase Admin SDK
@@ -151,7 +156,12 @@ class FirebaseService:
         try:
             conn = self._get_pg_conn()
             if not conn:
-                logger.error("[Database Service] Database connection check failed: Could not acquire connection from pool.")
+                global _pool_init_error
+                err_msg = ""
+                if _pool_init_error:
+                    err_msg = f" Reason: {type(_pool_init_error).__name__}: {str(_pool_init_error)}"
+                logger.error(f"[Database Service] Database connection check failed: Could not acquire connection from pool.{err_msg}")
+                print(f"[Database Service] Database connection check failed: Could not acquire connection from pool.{err_msg}")
                 return False
             cur = conn.cursor()
             cur.execute("SELECT 1;")
@@ -192,6 +202,7 @@ class FirebaseService:
                 return False
         except Exception as e:
             logger.critical(f"[Database Service] Database connection check failed with exception: {type(e).__name__}: {str(e)}", exc_info=True)
+            print(f"[Database Service] Database connection check failed with exception: {type(e).__name__}: {str(e)}")
             if conn:
                 try:
                     conn.close()
