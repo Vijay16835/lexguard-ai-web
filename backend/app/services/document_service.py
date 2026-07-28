@@ -181,6 +181,8 @@ def _log_tesseract_diagnostics() -> str:
             
             # Download eng.traineddata if not exists
             tessdata_file = os.path.join(tessdata_dir, "eng.traineddata")
+            fallback_tessdata_file = os.path.join(bin_dir, "eng.traineddata")
+            
             if not os.path.exists(tessdata_file):
                 print("[TESS-DIAG] eng.traineddata not found locally. Downloading...")
                 os.makedirs(tessdata_dir, exist_ok=True)
@@ -192,10 +194,19 @@ def _log_tesseract_diagnostics() -> str:
                     print(f"[TESS-DIAG] ERROR downloading eng.traineddata: {e}")
                     globals()["_last_tess_download_err"] = f"Tessdata Download: {str(e)}"
             
+            # Copy or download to bin_dir direct fallback if needed
+            if os.path.exists(tessdata_file) and not os.path.exists(fallback_tessdata_file):
+                try:
+                    import shutil
+                    shutil.copy2(tessdata_file, fallback_tessdata_file)
+                    print(f"[TESS-DIAG] Copied eng.traineddata to fallback {fallback_tessdata_file}")
+                except Exception as cp_err:
+                    print(f"[TESS-DIAG] Failed to copy fallback: {cp_err}")
+            
             if os.path.exists(tess_exe) and os.path.exists(tessdata_file):
-                os.environ["TESSDATA_PREFIX"] = bin_dir
+                os.environ["TESSDATA_PREFIX"] = tessdata_dir
                 resolved_path = tess_exe
-                print(f"[TESS-DIAG] Using local static binary at {tess_exe} with TESSDATA_PREFIX={bin_dir}")
+                print(f"[TESS-DIAG] Using local static binary at {tess_exe} with TESSDATA_PREFIX={tessdata_dir}")
 
     # Fallback to default name if still empty
     if not resolved_path:

@@ -98,4 +98,4 @@ app.include_router(notifications.router, prefix=f"{settings.API_V1_STR}/notifica
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to LexGuard AI Backend API", "version": "fa72751-v4"}
+    return {"message": "Welcome to LexGuard AI Backend API", "version": "fa72751-v5"}
