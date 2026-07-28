@@ -21,3 +21,4 @@ httpx
 supabase
 psycopg2-binary
 legacy-doc
+pypdfium2

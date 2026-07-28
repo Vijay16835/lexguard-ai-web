@@ -1,5 +1,6 @@
 import os
 import uuid
+import logging
 import mimetypes
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, BackgroundTasks, Request
@@ -16,6 +17,7 @@ from app.services.document_service import extract_text, get_file_extension, vali
 from app.services.groq_service import groq_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def update_document_status(db, document_id: str, status: str, error_message: Optional[str] = None):
@@ -26,7 +28,7 @@ def update_document_status(db, document_id: str, status: str, error_message: Opt
             "error_message": error_message
         })
     except Exception as fe:
-        print(f"Failed to update document status in Firestore: {fe}")
+        logger.error(f"Failed to update document status in Firestore: {fe}")
         
     conn = None
     try:
@@ -39,11 +41,11 @@ def update_document_status(db, document_id: str, status: str, error_message: Opt
                     (status, error_message, document_id)
                 )
                 conn.commit()
-                print(f"[DB] Document status updated to '{status}' in PostgreSQL")
+                logger.info(f"Document {document_id} status updated to '{status}' in PostgreSQL")
             finally:
                 cur.close()
     except Exception as pe:
-        print(f"Failed to update document status in PostgreSQL: {pe}")
+        logger.error(f"Failed to update document status in PostgreSQL: {pe}")
     finally:
         if conn:
             conn.close()
@@ -58,14 +60,14 @@ async def run_ai_analysis(document_id: str):
     try:
         doc_data = db.get_document(document_id)
         if not doc_data:
-            print(f"Document {document_id} not found for analysis")
+            logger.error(f"Document {document_id} not found for analysis")
             return
             
         doc = Document(**doc_data)
         
         # Step 1: Extract text
         update_document_status(db, document_id, "extracting")
-        print(f"[ANALYSIS_STARTED] Analysis started for document {document_id}")
+        logger.info(f"Analysis started for document {document_id}")
         
         # Check if file exists locally, if not download from Storage
         local_path = doc.path
@@ -82,10 +84,10 @@ async def run_ai_analysis(document_id: str):
                     f.write(res)
                 download_success = True
             except Exception as e:
-                print(f"Supabase download failed: {e}")
+                logger.error(f"Supabase download failed: {e}")
                 download_success = False
             if not download_success:
-                print(f"Failed to download file from Storage for {document_id}")
+                logger.error(f"Failed to download file from Storage for {document_id}")
                 update_document_status(db, document_id, "failed", "Unsupported file structure")
                 return
             # Update path locally
@@ -94,35 +96,33 @@ async def run_ai_analysis(document_id: str):
             
         file_ext = get_file_extension(doc.name)
         
-        # Verify MIME detection values specifically
-        import mimetypes
-        guessed_mime, _ = mimetypes.guess_type(doc.name)
-        print(f"[MIME-VERIFY] run_ai_analysis: doc.name={doc.name}, file_ext={file_ext}, guessed_mime={guessed_mime}")
-        print(f"[EXTRACT-VERIFY] Calling extract_text(local_path={local_path}, file_type={file_ext})")
+        logger.info(f"Starting background text extraction for document_id={document_id}, ext={file_ext}")
         
-        # Text Extraction phase
+        # Text Extraction phase (running CPU-intensive parsing/OCR in worker thread to prevent blocking event loop)
         try:
-            extracted_text = extract_text(local_path, file_ext)
+            import asyncio
+            extracted_text = await asyncio.to_thread(extract_text, local_path, file_ext)
             
             # Step 4: Validate Before AI Analysis
             MIN_TEXT_LENGTH = 10
             if not extracted_text or not extracted_text.strip() or len(extracted_text.strip()) < MIN_TEXT_LENGTH:
-                if file_ext in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
+                if file_ext in ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp',
+                                  'image/jpeg', 'image/png', 'image/jpg', 'image/bmp', 'image/tiff', 'image/webp']:
                     raise TextExtractionError("No readable text found in image.")
                 else:
                     raise TextExtractionError("Unable to extract readable text from document.")
         except TextExtractionError as ete:
             error_reason = str(ete)
             update_document_status(db, document_id, "failed", error_reason)
-            print(f"[TEXT_EXTRACTION_FAILED] Text extraction failed for {document_id}: {error_reason}")
+            logger.error(f"Text extraction failed for {document_id}: {error_reason}")
             return
         except Exception as ex:
             error_reason = "Unsupported file structure"
             update_document_status(db, document_id, "failed", error_reason)
-            print(f"[TEXT_EXTRACTION_FAILED] Text extraction failed for {document_id}: {ex}")
+            logger.error(f"Text extraction failed for {document_id}: {ex}", exc_info=True)
             return
             
-        print(f"[TEXT_EXTRACTION_SUCCESS] Text extracted successfully for {document_id}")
+        logger.info(f"Text extracted successfully for {document_id}")
         db.update_document(document_id, {
             "extracted_text": extracted_text,
             "status": "analyzing"
@@ -133,22 +133,20 @@ async def run_ai_analysis(document_id: str):
             from app.services.vector_service import vector_service
             await vector_service.create_vector_index(document_id, extracted_text)
         except Exception as e:
-            print(f"Vector indexing failed for {document_id}: {e}")
+            logger.error(f"Vector indexing failed for {document_id}: {e}")
         
         # Step 2: Run Groq AI analysis
         try:
-            print("[AI] Analysis started")
+            logger.info(f"AI Analysis started for document {document_id}")
             analysis_result = await groq_service.analyze_document(extracted_text)
-            print("[AI] Analysis completed")
-            print(f"[AI_ANALYSIS_SUCCESS] AI analysis completed for {document_id}")
+            logger.info(f"AI Analysis completed successfully for document {document_id}")
         except Exception as e:
-            print(f"Groq analysis failed for {document_id}: {e}")
+            logger.error(f"Groq analysis failed for {document_id}: {e}")
             update_document_status(db, document_id, "failed", "AI analysis failed")
             return
         
         # Step 3: Save analysis results to Document
-        print("[DB] Saving results")
-        print("[HISTORY] Saving analysis record")
+        logger.info(f"Saving analysis results to Firestore for document {document_id}")
         try:
             db.update_document(document_id, {
                 "risk_score": analysis_result.get("risk_score", 0),
@@ -186,8 +184,7 @@ async def run_ai_analysis(document_id: str):
                     "mitigation_advice": clause_data.get("mitigation_advice", ""),
                 })
         except Exception as fe:
-            print(f"Failed to save results to Firestore: {fe}")
-            print("[HISTORY] Save failed")
+            logger.error(f"Failed to save results to Firestore for {document_id}: {fe}")
             update_document_status(db, document_id, "failed", "Database save failed")
             return
             
@@ -263,9 +260,7 @@ async def run_ai_analysis(document_id: str):
                         ))
                         
                     conn.commit()
-                    print("[DB] Save successful")
-                    print(f"[DATABASE_SAVE_SUCCESS] Saved analysis and clauses to DB for {document_id}")
-                    print("[HISTORY] Record saved successfully")
+                    logger.info(f"Saved analysis and clauses to PostgreSQL for document {document_id}")
                 except Exception as tx_err:
                     conn.rollback()
                     raise tx_err
@@ -274,21 +269,19 @@ async def run_ai_analysis(document_id: str):
             else:
                 raise RuntimeError("Could not connect to PostgreSQL")
         except Exception as pg_err:
-            print(f"[FAIL] Failed to dual-write analysis/clauses to PostgreSQL: {pg_err}")
-            print("[HISTORY] Save to PostgreSQL failed (non-fatal)")
+            logger.warning(f"Failed to dual-write analysis/clauses to PostgreSQL: {pg_err} (non-fatal)")
         finally:
             if conn:
                 conn.close()
         
-        print(f"[OK] Analysis complete for document {document_id}: {analysis_result.get('risk_level')} risk")
+        logger.info(f"Analysis successfully completed for document {document_id}")
         
     except Exception as e:
-        print(f"Background analysis error for {document_id}: {e}")
-        traceback.print_exc()
+        logger.error(f"Background analysis error for {document_id}: {e}", exc_info=True)
         try:
             update_document_status(db, document_id, "failed", "Unsupported file structure")
         except Exception as update_err:
-            print(f"Failed to update document status to failed: {update_err}")
+            logger.error(f"Failed to update document status to failed: {update_err}")
 
 
 @router.post("/upload")
@@ -301,15 +294,15 @@ async def upload_document(
     """Upload a document and trigger AI analysis in the background."""
     # Validate file
     file_content = await file.read()
-    print("[UPLOAD] File received")
+    logger.info(f"File received: {file.filename}")
     
     is_valid, error_msg = validate_file(file.filename, len(file_content))
     if not is_valid:
-        print(f"[UPLOAD_FAILED] File validation failed for {file.filename}: {error_msg}")
+        logger.warning(f"File validation failed for {file.filename}: {error_msg}")
         raise HTTPException(status_code=400, detail=error_msg)
         
     size_mb = round(len(file_content) / (1024 * 1024), 2)
-    print(f"[UPLOAD_STARTED] Starting upload for file: {file.filename}, size: {size_mb} MB")
+    logger.info(f"Starting upload for file: {file.filename}, size: {size_mb} MB")
     
     import asyncio
     try:
@@ -318,11 +311,11 @@ async def upload_document(
             timeout=2.0
         )
     except Exception as e:
-        print(f"Timeout/Error fetching storage usage in upload: {e}")
+        logger.error(f"Timeout/Error fetching storage usage in upload: {e}")
         used_storage_mb = 0.0
     
     if used_storage_mb + size_mb > 20.0:
-        print(f"[UPLOAD_FAILED] Storage limit reached for user {current_user.id}")
+        logger.warning(f"Storage limit reached for user {current_user.id}")
         raise HTTPException(status_code=400, detail="Storage limit reached. Delete files to continue.")
     
     # Generate unique ID and save file locally first
@@ -348,9 +341,9 @@ async def upload_document(
                 file_options={"content-type": mime_type or "application/octet-stream"}
             )
         download_url = supabase.storage.from_("legal-documents").get_public_url(remote_path)
-        print("[UPLOAD] File stored")
+        logger.info(f"File stored in Supabase storage: {remote_path}")
     except Exception as e:
-        print(f"Supabase upload warning (non-fatal): {e}")
+        logger.warning(f"Supabase upload warning (non-fatal): {e}")
         upload_error = None
         download_url = ""
         
@@ -371,11 +364,11 @@ async def upload_document(
                 conn.commit()
             finally:
                 cur.close()
-            print(f"Successfully inserted document {doc_id} into PostgreSQL")
+            logger.info(f"Successfully inserted document {doc_id} into PostgreSQL")
         else:
-            print("Failed to get Postgres connection in upload_document")
+            logger.error("Failed to get Postgres connection in upload_document")
     except Exception as e:
-        print(f"Failed to save document to PostgreSQL: {e}")
+        logger.error(f"Failed to save document to PostgreSQL: {e}")
     finally:
         if conn:
             conn.close()
@@ -646,15 +639,14 @@ async def export_report(
             report_service.generate_document_report_text(doc_data.get("name"), analysis_dict, clauses_list, report_path, user_details)
             media_type = "text/plain"
     except Exception as e:
-        print(f"[Export] Failed to generate report for document={document_id} format={format}: {e}")
-        traceback.print_exc()
+        logger.error(f"Failed to generate report for document={document_id} format={format}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e) or "Report generation failed")
 
     if not os.path.exists(report_path) or os.path.getsize(report_path) == 0:
-        print(f"[Export] Report generation failed or produced empty file: {report_path}")
+        logger.error(f"Report generation failed or produced empty file: {report_path}")
         raise HTTPException(status_code=500, detail="Report generation failed")
 
-    print(f"[Export] Report generated successfully: {report_path} (format={format})")
+    logger.info(f"Report generated successfully: {report_path} (format={format})")
     return FileResponse(
         path=report_path,
         filename=report_filename,
@@ -690,9 +682,9 @@ async def delete_document(
                     try:
                         os.remove(os.path.join(report_dir, filename))
                     except Exception as report_err:
-                        print(f"Failed to delete report file: {report_err}")
+                        logger.error(f"Failed to delete report file: {report_err}")
     except Exception as e:
-        print(f"Failed to scan report directory for deletion: {e}")
+        logger.error(f"Failed to scan report directory for deletion: {e}")
         
     # Remove file from Supabase Storage
     try:
@@ -701,9 +693,9 @@ async def delete_document(
         file_ext = doc_data.get("type", "pdf")
         remote_path = f"users/{current_user.id}/documents/{document_id}.{file_ext}"
         supabase.storage.from_("legal-documents").remove([remote_path])
-        print(f"Successfully deleted remote document from Supabase: {remote_path}")
+        logger.info(f"Successfully deleted remote document from Supabase: {remote_path}")
     except Exception as e:
-        print(f"Failed to delete document from Supabase Storage: {e}")
+        logger.error(f"Failed to delete document from Supabase Storage: {e}")
     
     db.delete_document(document_id)
     db.delete_analysis(document_id)

@@ -1,7 +1,15 @@
 import os
 import sys
+import stat
+import shutil
+import urllib.request
+import logging
 import traceback
+import subprocess
 from typing import Optional
+
+# Setup module-level logger
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Supabase singleton — created once at module load, reused on every request.
@@ -23,8 +31,37 @@ class TextExtractionError(Exception):
     pass
 
 
+# ---------------------------------------------------------------------------
+# File Type and Size Constraints
+# ---------------------------------------------------------------------------
+SUPPORTED_EXTENSIONS = {'pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp'}
+MAX_FILE_SIZE_MB = 20
+
+
+def get_file_extension(filename: str) -> str:
+    """Get clean file extension from filename."""
+    _, ext = os.path.splitext(filename)
+    return ext.lstrip('.').lower()
+
+
+def validate_file(filename: str, file_size: int) -> tuple:
+    """Validate file type and size. Returns (is_valid, error_message)."""
+    ext = get_file_extension(filename)
+    if ext not in SUPPORTED_EXTENSIONS:
+        return False, f"Unsupported file type: .{ext}. Supported: {', '.join(SUPPORTED_EXTENSIONS)}"
+    
+    size_mb = file_size / (1024 * 1024)
+    if size_mb > MAX_FILE_SIZE_MB:
+        return False, f"File too large: {size_mb:.1f}MB. Maximum: {MAX_FILE_SIZE_MB}MB"
+    
+    return True, ""
+
+
+# ---------------------------------------------------------------------------
+# File Parsers (PDF, DOC, DOCX, TXT)
+# ---------------------------------------------------------------------------
 def extract_text_from_pdf(file_path: str) -> str:
-    """Extract text from PDF files using pdfplumber."""
+    """Extract text from PDF files using pdfplumber with PyPDF2 fallback."""
     try:
         import pdfplumber
         text = ""
@@ -35,8 +72,7 @@ def extract_text_from_pdf(file_path: str) -> str:
                     text += page_text + "\n\n"
         return text.strip()
     except Exception as e:
-        print(f"PDF extraction error: {e}")
-        # Fallback to PyPDF2
+        logger.warning(f"pdfplumber failed to parse PDF: {e}. Falling back to PyPDF2.")
         try:
             import PyPDF2
             text = ""
@@ -48,7 +84,7 @@ def extract_text_from_pdf(file_path: str) -> str:
                         text += page_text + "\n\n"
             return text.strip()
         except Exception as e2:
-            print(f"PyPDF2 fallback failed: {e2}")
+            logger.error(f"PyPDF2 fallback also failed: {e2}")
             raise TextExtractionError("PDF text extraction failed") from e2
 
 
@@ -68,8 +104,7 @@ def extract_text_from_doc(file_path: str) -> str:
     except TextExtractionError:
         raise
     except Exception as e:
-        print(f"DOC extraction error: {e}")
-        traceback.print_exc()
+        logger.error(f"DOC extraction error: {e}")
         raise TextExtractionError("Unsupported file structure") from e
 
 
@@ -83,7 +118,7 @@ def extract_text_from_docx(file_path: str) -> str:
             if paragraph.text.strip():
                 text += paragraph.text + "\n"
         
-        # Also extract from tables
+        # Extract cell text from tables
         for table in doc.tables:
             for row in table.rows:
                 row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
@@ -97,8 +132,7 @@ def extract_text_from_docx(file_path: str) -> str:
     except TextExtractionError:
         raise
     except Exception as e:
-        print(f"DOCX extraction error: {e}")
-        traceback.print_exc()
+        logger.error(f"DOCX extraction error: {e}")
         raise TextExtractionError("Unsupported file structure") from e
 
 
@@ -113,304 +147,226 @@ def extract_text_from_txt(file_path: str) -> str:
     except TextExtractionError:
         raise
     except Exception as e:
-        print(f"TXT extraction error: {e}")
+        logger.error(f"TXT extraction error: {e}")
         raise TextExtractionError("Unsupported file structure") from e
 
 
 # ---------------------------------------------------------------------------
-# Tesseract Diagnostic — called once at module import and on each OCR attempt
+# Tesseract Bootstrapping and Path Resolution
 # ---------------------------------------------------------------------------
-def _log_tesseract_diagnostics() -> str:
+def _bootstrap_static_tesseract() -> str:
     """
-    Run diagnostic checks for Tesseract availability and log results.
-    Returns the resolved tesseract binary path (or empty string on failure).
+    Download and configure static Tesseract binary on Linux native environments if needed.
+    Returns path to verified binary, or empty string on failure.
     """
-    import shutil
-    import subprocess
-    import sys
-    import urllib.request
-    import stat
+    if not sys.platform.startswith("linux"):
+        return ""
+        
+    from app.core.config import settings
+    
+    # Store binary and data files relative to settings.UPLOAD_DIR to keep it self-contained
+    bin_dir = os.path.abspath(os.path.join(settings.UPLOAD_DIR, "..", "bin"))
+    tess_exe = os.path.join(bin_dir, "tesseract-static")
+    tessdata_dir = os.path.join(bin_dir, "tessdata")
+    tessdata_file = os.path.join(tessdata_dir, "eng.traineddata")
+    fallback_tessdata_file = os.path.join(bin_dir, "eng.traineddata")
+    
+    # Helper to download with timeout and user-agent spoofing
+    def _download_file(url: str, dest_path: str):
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            )
+            with urllib.request.urlopen(req, timeout=30) as response:
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                with open(dest_path, 'wb') as out_file:
+                    shutil.copyfileobj(response, out_file)
+        except Exception as e:
+            logger.error(f"[TESS-INSTALL] Failed to download {url} to {dest_path}: {e}")
+            raise RuntimeError(f"Download failed: {e}") from e
+
+    # 1. Download static binary if missing
+    if not os.path.exists(tess_exe):
+        logger.info("[TESS-INSTALL] Downloading static Tesseract binary from GitHub...")
+        url_bin = "https://github.com/DanielMYT/tesseract-static/releases/download/tesseract-5.5.3/tesseract.x86_64"
+        try:
+            _download_file(url_bin, tess_exe)
+            st = os.stat(tess_exe)
+            os.chmod(tess_exe, st.st_mode | stat.S_IEXEC)
+            logger.info(f"[TESS-INSTALL] Static binary downloaded and permissions set at {tess_exe}")
+        except Exception as e:
+            logger.error(f"[TESS-INSTALL] Error preparing static binary: {e}")
+            return ""
+
+    # 2. Download fast English language pack if missing
+    if not os.path.exists(tessdata_file):
+        logger.info("[TESS-INSTALL] Downloading eng.traineddata language pack...")
+        url_lang = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
+        try:
+            _download_file(url_lang, tessdata_file)
+            logger.info(f"[TESS-INSTALL] Language pack downloaded successfully at {tessdata_file}")
+        except Exception as e:
+            logger.error(f"[TESS-INSTALL] Error preparing language pack: {e}")
+            return ""
+
+    # 3. Direct parent directory fallback copy for Musl path resolving
+    if os.path.exists(tessdata_file) and not os.path.exists(fallback_tessdata_file):
+        try:
+            shutil.copy2(tessdata_file, fallback_tessdata_file)
+            logger.info(f"[TESS-INSTALL] Copied eng.traineddata to parent fallback path {fallback_tessdata_file}")
+        except Exception as e:
+            logger.warning(f"[TESS-INSTALL] Fallback copy failed: {e}")
+
+    # Verify everything exists and return path
+    if os.path.exists(tess_exe) and os.path.exists(tessdata_file):
+        os.environ["TESSDATA_PREFIX"] = tessdata_dir
+        return tess_exe
+        
+    return ""
+
+
+def get_tesseract_path() -> str:
+    """
+    Resolves the active tesseract binary path. 
+    Checks settings, system PATH, typical Windows paths, and boots static fallback on Render if needed.
+    """
     from app.core.config import settings
 
-    print("[TESS-DIAG] === Tesseract Diagnostic ===")
+    # 1. Check configured path first
+    cfg_path = settings.TESSERACT_CMD
+    if cfg_path and os.path.exists(cfg_path):
+        return cfg_path
+        
+    # 2. Check system PATH
+    sys_path = shutil.which("tesseract")
+    if sys_path:
+        return sys_path
+        
+    # 3. Check typical Windows installation paths
+    if sys.platform.startswith("win"):
+        win_paths = [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"
+        ]
+        for wp in win_paths:
+            if os.path.exists(wp):
+                return wp
 
-    # 1. Check configured path
-    configured_path = settings.TESSERACT_CMD
-    exists = os.path.exists(configured_path)
-    print(f"[TESS-DIAG] settings.TESSERACT_CMD = {configured_path!r}")
-    print(f"[TESS-DIAG] os.path.exists(configured_path) = {exists}")
+    # 4. Dynamic static binary fallback (Render native platform)
+    fallback_path = _bootstrap_static_tesseract()
+    if fallback_path:
+        return fallback_path
+        
+    return "tesseract"
 
-    # 2. which tesseract
-    which_path = shutil.which("tesseract")
-    print(f"[TESS-DIAG] shutil.which('tesseract') = {which_path!r}")
 
-    # 3. Determine if we should use fallback static binary
-    resolved_path = configured_path if exists else (which_path or "")
+# ---------------------------------------------------------------------------
+# OCR and Image Parsing
+# ---------------------------------------------------------------------------
+def clean_extracted_text(text: str) -> str:
+    """Clean and normalize extracted text, removing control characters and excessive whitespaces."""
+    if not text:
+        return ""
+    # Filter out control characters except tabs/newlines
+    cleaned = "".join(ch for ch in text if ch.isprintable() or ch in ('\n', '\r', '\t'))
+    return "\n".join(line.strip() for line in cleaned.splitlines() if line.strip()).strip()
+
+
+def validate_image_file(file_path: str):
+    """Validate that the file exists, is not empty, and is a valid image within bounds."""
+    if not os.path.exists(file_path):
+        raise TextExtractionError("File not found on server.")
+    if os.path.getsize(file_path) == 0:
+        raise TextExtractionError("Image file is empty.")
     
-    if not resolved_path:
-        # Try to download and use the static binary if on Linux (Render)
-        if sys.platform.startswith("linux"):
-            bin_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "bin")
-            tessdata_dir = os.path.join(bin_dir, "tessdata")
-            tess_exe = os.path.join(bin_dir, "tesseract-static")
-            
-            # Helper to download with custom User-Agent
-            def _download(url, dest):
-                req = urllib.request.Request(
-                    url,
-                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                )
-                with urllib.request.urlopen(req) as response, open(dest, 'wb') as out_file:
-                    out_file.write(response.read())
-
-            print(f"[TESS-DIAG] System tesseract not found. Checking static binary fallback at: {tess_exe}")
-            
-            # Download binary if not exists
-            if not os.path.exists(tess_exe):
-                print("[TESS-DIAG] Static binary not found locally. Downloading from github...")
-                os.makedirs(bin_dir, exist_ok=True)
-                url = "https://github.com/DanielMYT/tesseract-static/releases/download/tesseract-5.5.3/tesseract.x86_64"
-                try:
-                    _download(url, tess_exe)
-                    st = os.stat(tess_exe)
-                    os.chmod(tess_exe, st.st_mode | stat.S_IEXEC)
-                    print(f"[TESS-DIAG] Downloaded tesseract static binary to {tess_exe}")
-                except Exception as e:
-                    print(f"[TESS-DIAG] ERROR downloading static binary: {e}")
-                    globals()["_last_tess_download_err"] = f"Binary Download: {str(e)}"
-            
-            # Download eng.traineddata if not exists
-            tessdata_file = os.path.join(tessdata_dir, "eng.traineddata")
-            fallback_tessdata_file = os.path.join(bin_dir, "eng.traineddata")
-            
-            if not os.path.exists(tessdata_file):
-                print("[TESS-DIAG] eng.traineddata not found locally. Downloading...")
-                os.makedirs(tessdata_dir, exist_ok=True)
-                url_data = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
-                try:
-                    _download(url_data, tessdata_file)
-                    print(f"[TESS-DIAG] Downloaded eng.traineddata to {tessdata_file}")
-                except Exception as e:
-                    print(f"[TESS-DIAG] ERROR downloading eng.traineddata: {e}")
-                    globals()["_last_tess_download_err"] = f"Tessdata Download: {str(e)}"
-            
-            # Copy or download to bin_dir direct fallback if needed
-            if os.path.exists(tessdata_file) and not os.path.exists(fallback_tessdata_file):
-                try:
-                    import shutil
-                    shutil.copy2(tessdata_file, fallback_tessdata_file)
-                    print(f"[TESS-DIAG] Copied eng.traineddata to fallback {fallback_tessdata_file}")
-                except Exception as cp_err:
-                    print(f"[TESS-DIAG] Failed to copy fallback: {cp_err}")
-            
-            if os.path.exists(tess_exe) and os.path.exists(tessdata_file):
-                os.environ["TESSDATA_PREFIX"] = tessdata_dir
-                resolved_path = tess_exe
-                print(f"[TESS-DIAG] Using local static binary at {tess_exe} with TESSDATA_PREFIX={tessdata_dir}")
-
-    # Fallback to default name if still empty
-    if not resolved_path:
-        resolved_path = "tesseract"
-
-    # 4. tesseract --version
+    from PIL import Image
     try:
-        result = subprocess.run(
-            [resolved_path, "--version"],
-            capture_output=True, text=True, timeout=10
-        )
-        version_out = (result.stdout or "").strip() or (result.stderr or "").strip()
-        print(f"[TESS-DIAG] tesseract --version output: {version_out[:200]}")
-        print(f"[TESS-DIAG] return code: {result.returncode}")
-    except FileNotFoundError:
-        print(f"[TESS-DIAG] ERROR: tesseract binary not found at {resolved_path!r}")
-        resolved_path = ""
-    except Exception as diag_err:
-        print(f"[TESS-DIAG] ERROR running tesseract --version: {diag_err}")
-        resolved_path = ""
-
-    print("[TESS-DIAG] === End Diagnostic ===")
-    return resolved_path
+        # Verify format and integrity without loading data
+        with Image.open(file_path) as img:
+            img.verify()
+    except Exception as e:
+        raise TextExtractionError(f"Invalid image format: {e}")
 
 
 def preprocess_image_pillow(file_path: str):
     """
-    Preprocess the image using Pillow only (no OpenCV dependency).
-    Steps:
-      1. Open with Pillow — handles EXIF orientation automatically.
-      2. Convert RGBA/LA or P with transparency to RGB using a white background paste.
-      3. Convert to grayscale (L mode) for better OCR accuracy.
-      4. Sharpen.
-    Returns a PIL Image object ready for pytesseract.
+    Load image, transpose EXIF orientation, handle transparency, and convert to grayscale.
     """
     from PIL import Image, ImageOps, ImageFilter
-
-    with Image.open(file_path) as pil_img:
-        # Fix EXIF orientation
-        pil_img = ImageOps.exif_transpose(pil_img)
+    
+    try:
+        # Increase pixel limit for decompression protection (e.g. max 100MP)
+        Image.MAX_IMAGE_PIXELS = 100_000_000
         
-        # Transparent PNG / Alpha Channel paste on white background
-        if pil_img.mode in ("RGBA", "LA") or (pil_img.mode == "P" and "transparency" in pil_img.info):
-            background = Image.new("RGBA", pil_img.size, (255, 255, 255, 255))
-            if pil_img.mode == "P":
-                pil_img = pil_img.convert("RGBA")
-            background.paste(pil_img, (0, 0), pil_img)
-            pil_img = background.convert("RGB")
-        else:
-            pil_img = pil_img.convert("RGB")
+        with Image.open(file_path) as img:
+            width, height = img.size
+            if width * height > Image.MAX_IMAGE_PIXELS:
+                raise TextExtractionError(f"Image resolution too large ({width}x{height}). Max: 100MP.")
             
-        gray = pil_img.convert("L")
-        sharpened = gray.filter(ImageFilter.SHARPEN)
-        return sharpened.copy()
+            # Correct EXIF rotation
+            img = ImageOps.exif_transpose(img)
+            
+            # Flatten alpha/transparency channels on white background
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                bg.paste(img, (0, 0), img)
+                img = bg.convert("RGB")
+            else:
+                img = img.convert("RGB")
+            
+            # Grayscale & subtle sharpen
+            gray = img.convert("L")
+            sharpened = gray.filter(ImageFilter.SHARPEN)
+            return sharpened.copy()
+    except TextExtractionError:
+        raise
+    except Exception as e:
+        raise TextExtractionError(f"Image preprocessing failed: {e}") from e
 
 
 def extract_text_from_image(file_path: str) -> str:
-    """
-    Extract text from images using Pillow + pytesseract.
-    """
-    import os
-    import mimetypes
-    import traceback
-    from PIL import Image
+    """Validate, preprocess, and run OCR on the specified image file."""
     import pytesseract
-    from app.core.config import settings
 
-    # 1. Logging input details
-    filename = os.path.basename(file_path)
-    file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
-    exists = os.path.exists(file_path)
-    _, file_ext = os.path.splitext(filename)
-    file_ext = file_ext.lstrip('.').lower()
-    guessed_mime, _ = mimetypes.guess_type(file_path)
-
-    print("=== [OCR-FLOW] Image Upload / Process Entry ===")
-    print(f"  - Uploaded Filename: {filename}")
-    print(f"  - Temporary File Path: {file_path}")
-    print(f"  - File Exists on Disk: {exists}")
-    print(f"  - File Size: {file_size} bytes")
-    print(f"  - File Extension: {file_ext}")
-    print(f"  - Detected MIME Type: {guessed_mime}")
+    # Validate file
+    validate_image_file(file_path)
     
-    # Verify MIME detection values specifically
-    print(f"[MIME-VERIFY] Filename: {filename}, Ext: {file_ext}, MIME: {guessed_mime}")
-
-    # 2. Verify original image details
-    orig_format = None
-    orig_mode = None
-    orig_size = None
+    # Configure path
+    tess_path = get_tesseract_path()
+    if os.path.exists(tess_path):
+        pytesseract.pytesseract.tesseract_cmd = tess_path
+    
+    # Preprocess
+    img = preprocess_image_pillow(file_path)
+    
+    # Run OCR with 30s timeout protection
     try:
-        with Image.open(file_path) as orig_img:
-            orig_format = orig_img.format
-            orig_mode = orig_img.mode
-            orig_size = orig_img.size
-            print(f"  - Original PIL Image Format: {orig_format}")
-            print(f"  - Original PIL Image Mode: {orig_mode}")
-            print(f"  - Original PIL Image Size: {orig_size}")
-    except Exception as img_err:
-        print(f"[OCR-FLOW] Failed to load original image via Pillow: {img_err}")
-        traceback.print_exc()
-
-    # --- Step 1: Tesseract diagnostics ---
-    resolved_tess_path = _log_tesseract_diagnostics()
-    print(f"  - Tesseract Executable Path: {resolved_tess_path!r}")
-
-    # --- Step 2: Configure pytesseract binary path ---
-    if resolved_tess_path and os.path.exists(resolved_tess_path):
-        pytesseract.pytesseract.tesseract_cmd = resolved_tess_path
-        print(f"[OCR] pytesseract.tesseract_cmd set to: {resolved_tess_path!r}")
-    else:
-        print("[OCR] WARNING: tesseract_cmd not explicitly set — relying on system PATH")
-
-    # Log pytesseract setting & try to run get_tesseract_version()
-    print(f"  - pytesseract.pytesseract.tesseract_cmd: {pytesseract.pytesseract.tesseract_cmd}")
-    try:
-        tess_version = pytesseract.get_tesseract_version()
-        print(f"  - Tesseract Engine Version: {tess_version}")
-    except Exception as ver_err:
-        print(f"[OCR-FLOW] Failed to get Tesseract version: {ver_err}")
-        traceback.print_exc()
-
-    # --- Step 3: Preprocess image ---
-    preprocessed_img = None
-    try:
-        preprocessed_img = preprocess_image_pillow(file_path)
-        print(f"[OCR-FLOW] Preprocessing completed. Mode: {preprocessed_img.mode}, Size: {preprocessed_img.size}")
+        extracted_text = pytesseract.image_to_string(img, timeout=30)
+    except RuntimeError as re:
+        if "timeout" in str(re).lower():
+            raise TextExtractionError("OCR extraction timed out after 30 seconds.") from re
+        raise TextExtractionError(f"OCR engine runtime error: {re}") from re
+    except Exception as e:
+        logger.error(f"OCR execution failed: {e}", exc_info=True)
+        raise TextExtractionError(f"OCR extraction failed: {e}") from e
         
-        # Save a temporary debug image
-        debug_dir = os.path.join(settings.UPLOAD_DIR, "debug")
-        os.makedirs(debug_dir, exist_ok=True)
-        debug_path = os.path.join(debug_dir, f"debug_preprocessed_{filename}")
-        preprocessed_img.save(debug_path)
-        print(f"  - Preprocessed Debug Image Saved to: {debug_path}")
-    except Exception as pre_err:
-        print(f"[OCR] Pillow preprocessing failed: {pre_err}. Trying to use raw image.")
-        traceback.print_exc()
-        try:
-            with Image.open(file_path) as raw_img:
-                preprocessed_img = raw_img.convert("L")
-        except Exception as raw_err:
-            print(f"[OCR-FLOW] Failed to convert raw image to grayscale: {raw_err}")
-            traceback.print_exc()
-            raise TextExtractionError(f"Cannot open image file: {raw_err}") from raw_err
-
-    # --- Step 4: Run OCR ---
-    extracted_text = ""
-    try:
-        extracted_text = pytesseract.image_to_string(preprocessed_img)
-        print(f"[OCR] pytesseract.image_to_string() returned {len(extracted_text)} characters")
-    except pytesseract.TesseractNotFoundError as tnf:
-        diag_msg = f"Tesseract OCR engine not found on server. Resolved Path: {resolved_tess_path!r}, Cmd: {pytesseract.pytesseract.tesseract_cmd!r}"
-        if sys.platform.startswith("linux"):
-            bin_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "bin")
-            tess_exe = os.path.join(bin_dir, "tesseract-static")
-            tessdata_file = os.path.join(bin_dir, "tessdata", "eng.traineddata")
-            diag_msg += f" | Static Exe Exists: {os.path.exists(tess_exe)}, Tessdata Exists: {os.path.exists(tessdata_file)}"
-            global_last_err = globals().get("_last_tess_download_err", "None")
-            diag_msg += f" | Last Download Error: {global_last_err}"
-            
-        print(f"[OCR] CRITICAL: TesseractNotFoundError — {diag_msg}")
-        traceback.print_exc()
-        raise TextExtractionError(diag_msg) from tnf
-    except Exception as ocr_err:
-        print(f"[OCR] pytesseract.image_to_string() raised: {ocr_err}")
-        traceback.print_exc()
-        raise TextExtractionError(f"OCR extraction failed: {ocr_err}") from ocr_err
-
-    # --- Step 5: Validate extracted text & analyze failure if empty ---
-    stripped_text = extracted_text.strip()
-    print(f"  - OCR Output Length (stripped): {len(stripped_text)}")
-
-    if len(stripped_text) == 0:
-        print("[OCR] STOP: extracted_text length is 0. OCR produced no output.")
-        
-        # Inspect and determine why OCR is empty
-        reasons = []
+    cleaned_text = clean_extracted_text(extracted_text)
+    if not cleaned_text:
+        # Check if image is completely blank/solid color to provide specific diagnostic advice
+        from PIL import Image
         try:
             with Image.open(file_path) as test_img:
-                # 1. Blank/Uniform Image test
                 extrema = test_img.convert("L").getextrema()
                 if extrema and extrema[0] == extrema[1]:
-                    reasons.append("Image is completely blank or a single solid color.")
-                
-                # 2. Transparent PNG / Alpha Channel issue
-                if test_img.mode in ("RGBA", "LA") or (test_img.mode == "P" and "transparency" in test_img.info):
-                    reasons.append("Image has an active alpha channel / transparency.")
-                
-                # 3. Small Image size
-                if test_img.size[0] < 50 or test_img.size[1] < 50:
-                    reasons.append(f"Image resolution is extremely low ({test_img.size[0]}x{test_img.size[1]}), characters are too small to resolve.")
-                
-                # 4. Mode check
-                if test_img.mode not in ("1", "L", "RGB", "RGBA", "P"):
-                    reasons.append(f"Image has an unusual pixel format/mode: {test_img.mode}.")
-        except Exception as inspect_err:
-            reasons.append(f"Failed to inspect image features: {inspect_err}")
-            
-        reason_str = " | ".join(reasons) if reasons else "Blank output. Possible causes: no text features, wrong language pack, low image quality/contrast, or severe thresholding/blurring in preprocessing."
-        print(f"[OCR-FAILURE-ANALYSIS] Root cause candidate(s): {reason_str}")
-        raise TextExtractionError(f"No readable text found in image. Reason: {reason_str}")
-
-    print("[OCR] OCR completed successfully.")
-    return stripped_text
+                    raise TextExtractionError("No readable text found in image (image is completely blank).")
+        except Exception:
+            pass
+        raise TextExtractionError("No readable text found in image.")
+        
+    return cleaned_text
 
 
 def ocr_pdf(file_path: str) -> str:
@@ -418,7 +374,7 @@ def ocr_pdf(file_path: str) -> str:
     import pypdfium2 as pdfium
     import tempfile
     
-    print("[OCR] OCR started")
+    logger.info(f"Starting PDF OCR fallback for: {file_path}")
     text = ""
     pdf = None
     try:
@@ -427,7 +383,6 @@ def ocr_pdf(file_path: str) -> str:
             page = pdf.get_page(i)
             pil_image = page.render(scale=2).to_pil()
             
-            # Save page image to temporary file
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 temp_img_path = tmp.name
             try:
@@ -437,15 +392,17 @@ def ocr_pdf(file_path: str) -> str:
                     text += page_text + "\n\n"
             finally:
                 if os.path.exists(temp_img_path):
-                    os.remove(temp_img_path)
+                    try:
+                        os.remove(temp_img_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to delete temp PDF page image: {e}")
     except Exception as e:
-        print(f"ocr_pdf failed: {e}")
+        logger.error(f"ocr_pdf failed: {e}")
         raise TextExtractionError("OCR extraction failed") from e
     finally:
         if pdf:
             pdf.close()
             
-    print("[OCR] OCR completed")
     if not text.strip():
         raise TextExtractionError("OCR extraction failed")
     return text.strip()
@@ -454,7 +411,7 @@ def ocr_pdf(file_path: str) -> str:
 def extract_text(file_path: str, file_type: str) -> str:
     """Main dispatcher — extract text based on file type."""
     file_type = file_type.lower()
-    print("[EXTRACT] Starting extraction")
+    logger.info(f"Starting text extraction for file type: {file_type}")
     
     text = ""
     try:
@@ -467,27 +424,20 @@ def extract_text(file_path: str, file_type: str) -> str:
                 text = extract_text_from_docx(file_path)
         elif file_type in ['txt', 'text/plain']:
             text = extract_text_from_txt(file_path)
-        elif file_type in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
+        elif file_type in ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp', 
+                          'image/jpeg', 'image/png', 'image/jpg', 'image/bmp', 'image/tiff', 'image/webp']:
             text = extract_text_from_image(file_path)
         else:
             raise TextExtractionError("Unsupported file structure")
     except TextExtractionError:
         raise
     except Exception as e:
-        print(f"Extraction failed: {e}")
-        traceback.print_exc()
-        if file_type in ['pdf', 'application/pdf']:
-            raise TextExtractionError(f"PDF text extraction failed: {e}") from e
-        elif file_type in ['doc', 'docx', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']:
-            raise TextExtractionError(f"Unsupported file structure: {e}") from e
-        elif file_type in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
-            raise TextExtractionError(f"OCR extraction failed: {e}") from e
-        else:
-            raise TextExtractionError(f"Unsupported file structure: {e}") from e
+        logger.error(f"Extraction failed: {e}", exc_info=True)
+        raise TextExtractionError(f"Extraction failed: {e}") from e
 
     # OCR Fallback if text is empty
     if not text.strip():
-        print("[EXTRACT] Extracted text empty. Starting OCR fallback.")
+        logger.info("Extracted text empty. Starting OCR fallback.")
         if file_type in ['pdf', 'application/pdf']:
             try:
                 text = ocr_pdf(file_path)
@@ -495,54 +445,25 @@ def extract_text(file_path: str, file_type: str) -> str:
                 raise
             except Exception as ocr_err:
                 raise TextExtractionError(f"OCR extraction failed: {ocr_err}") from ocr_err
-        elif file_type in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
-            try:
-                text = extract_text_from_image(file_path)
-            except TextExtractionError:
-                raise
-            except Exception as ocr_err:
-                raise TextExtractionError(f"OCR extraction failed: {ocr_err}") from ocr_err
+        elif file_type in ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp', 
+                          'image/jpeg', 'image/png', 'image/jpg', 'image/bmp', 'image/tiff', 'image/webp']:
+            # Do NOT run image OCR twice. If it returned empty in step 1, raise immediately
+            raise TextExtractionError("No readable text found in image.")
         else:
             raise TextExtractionError("Unable to extract readable text from document.")
             
     if not text.strip():
-        if file_type in ['pdf', 'application/pdf'] or file_type in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
-            raise TextExtractionError("OCR extraction failed: No text output after fallback")
-        else:
-            raise TextExtractionError("Unable to extract readable text from document.")
+        raise TextExtractionError("Unable to extract readable text from document.")
             
-    print(f"[EXTRACT] Text length: {len(text)}")
+    logger.info(f"Text extraction successful. Character count: {len(text)}")
     return text.strip()
 
 
-def get_file_extension(filename: str) -> str:
-    """Get clean file extension from filename."""
-    _, ext = os.path.splitext(filename)
-    return ext.lstrip('.').lower()
-
-
-SUPPORTED_EXTENSIONS = {'pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png'}
-MAX_FILE_SIZE_MB = 20
-
-def validate_file(filename: str, file_size: int) -> tuple:
-    """Validate file type and size. Returns (is_valid, error_message)."""
-    ext = get_file_extension(filename)
-    if ext not in SUPPORTED_EXTENSIONS:
-        return False, f"Unsupported file type: .{ext}. Supported: {', '.join(SUPPORTED_EXTENSIONS)}"
-    
-    size_mb = file_size / (1024 * 1024)
-    if size_mb > MAX_FILE_SIZE_MB:
-        return False, f"File too large: {size_mb:.1f}MB. Maximum: {MAX_FILE_SIZE_MB}MB"
-    
-    return True, ""
-
-
+# ---------------------------------------------------------------------------
+# Storage Usage Calculation (Unchanged Business Logic)
+# ---------------------------------------------------------------------------
 def get_user_storage_usage_mb(user_id: str) -> float:
-    """Calculate the total storage used by a user in MB.
-    Includes:
-    - Uploaded files (from PostgreSQL/Firestore, checking local disk or Supabase Storage size)
-    - Generated reports (from local disk reports directory matching user's document IDs)
-    """
+    """Calculate the total storage used by a user in MB."""
     total_size_bytes = 0
     doc_ids_and_sizes = {}  # doc_id -> size_in_bytes
 
@@ -562,11 +483,11 @@ def get_user_storage_usage_mb(user_id: str) -> float:
                 cur.close()
                 conn.close()
             except Exception as e:
-                print(f"Error querying PostgreSQL documents: {e}")
+                logger.error(f"Error querying PostgreSQL documents: {e}")
                 if conn:
                     conn.close()
     except Exception as e:
-        print(f"PostgreSQL connection error: {e}")
+        logger.error(f"PostgreSQL connection error: {e}")
 
     # 2. Fetch documents from Firestore
     try:
@@ -580,7 +501,7 @@ def get_user_storage_usage_mb(user_id: str) -> float:
                 if doc_id not in doc_ids_and_sizes:
                     doc_ids_and_sizes[doc_id] = int(size_mb * 1024 * 1024)
     except Exception as e:
-        print(f"Error querying Firestore documents: {e}")
+        logger.error(f"Error querying Firestore documents: {e}")
 
     # 3. Fetch documents from Supabase Storage
     try:
@@ -596,7 +517,7 @@ def get_user_storage_usage_mb(user_id: str) -> float:
                         size_bytes = metadata.get('size', 0)
                         doc_ids_and_sizes[doc_id] = size_bytes
     except Exception as e:
-        print(f"Error listing Supabase Storage files: {e}")
+        logger.error(f"Error listing Supabase Storage files: {e}")
 
     # 4. Check actual file sizes on local disk
     from app.core.config import settings
@@ -611,7 +532,7 @@ def get_user_storage_usage_mb(user_id: str) -> float:
                     if doc_id in doc_ids_and_sizes:
                         local_doc_sizes[doc_id] = os.path.getsize(filepath)
         except Exception as e:
-            print(f"Error scanning local upload directory: {e}")
+            logger.error(f"Error scanning local upload directory: {e}")
 
     # For each found document ID, use local size if it exists, else the db/remote size
     for doc_id, remote_size in doc_ids_and_sizes.items():
@@ -621,20 +542,18 @@ def get_user_storage_usage_mb(user_id: str) -> float:
             total_size_bytes += remote_size
 
     # 5. Check generated reports
-    # Reports are under settings.UPLOAD_DIR/reports/LexGuard_Analysis_{doc_id}.{ext}
     reports_dir = os.path.join(upload_dir, "reports")
     if os.path.exists(reports_dir):
         try:
             for filename in os.listdir(reports_dir):
                 filepath = os.path.join(reports_dir, filename)
                 if os.path.isfile(filepath):
-                    # Check if this report belongs to any of the user's document IDs
                     for doc_id in doc_ids_and_sizes.keys():
                         if f"LexGuard_Analysis_{doc_id}" in filename:
                             total_size_bytes += os.path.getsize(filepath)
                             break
         except Exception as e:
-            print(f"Error scanning local reports directory: {e}")
+            logger.error(f"Error scanning local reports directory: {e}")
 
     total_size_mb = total_size_bytes / (1024 * 1024)
     return round(total_size_mb, 2)
