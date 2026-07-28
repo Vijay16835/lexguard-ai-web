@@ -70,3 +70,12 @@ backend/vector_db/
 
 
 
+*.tmp
+*.bak
+*.old
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+backend/scratch/

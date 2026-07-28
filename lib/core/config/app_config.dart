@@ -7,7 +7,7 @@ class AppConfig {
   // Render production backend — all environments point here.
   // To restore local dev: change _kRenderBaseUrl to 'http://10.0.2.2:8000/api/v1'
   // -----------------------------------------------------------------------
-  static const String _kRenderBaseUrl = 'https://pdd-xvyl.onrender.com/api/v1';
+  static const String _kRenderBaseUrl = 'https://pdd-uw63.onrender.com/api/v1';
 
   static const String flavor =
       String.fromEnvironment('FLAVOR', defaultValue: 'development');
