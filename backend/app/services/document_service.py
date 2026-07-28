@@ -169,7 +169,7 @@ def _log_tesseract_diagnostics() -> str:
             if not os.path.exists(tess_exe):
                 print("[TESS-DIAG] Static binary not found locally. Downloading from github...")
                 os.makedirs(bin_dir, exist_ok=True)
-                url = "https://github.com/DanielMYT/tesseract-static/releases/download/v5.3.0/tesseract.x86_64"
+                url = "https://github.com/DanielMYT/tesseract-static/releases/download/tesseract-5.5.3/tesseract.x86_64"
                 try:
                     _download(url, tess_exe)
                     st = os.stat(tess_exe)
