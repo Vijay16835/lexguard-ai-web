@@ -126,6 +126,9 @@ def _log_tesseract_diagnostics() -> str:
     """
     import shutil
     import subprocess
+    import sys
+    import urllib.request
+    import stat
     from app.core.config import settings
 
     print("[TESS-DIAG] === Tesseract Diagnostic ===")
@@ -140,8 +143,53 @@ def _log_tesseract_diagnostics() -> str:
     which_path = shutil.which("tesseract")
     print(f"[TESS-DIAG] shutil.which('tesseract') = {which_path!r}")
 
-    # 3. tesseract --version
-    resolved_path = configured_path if exists else (which_path or "tesseract")
+    # 3. Determine if we should use fallback static binary
+    resolved_path = configured_path if exists else (which_path or "")
+    
+    if not resolved_path:
+        # Try to download and use the static binary if on Linux (Render)
+        if sys.platform.startswith("linux"):
+            bin_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "bin")
+            tessdata_dir = os.path.join(bin_dir, "tessdata")
+            tess_exe = os.path.join(bin_dir, "tesseract-static")
+            
+            print(f"[TESS-DIAG] System tesseract not found. Checking static binary fallback at: {tess_exe}")
+            
+            # Download binary if not exists
+            if not os.path.exists(tess_exe):
+                print("[TESS-DIAG] Static binary not found locally. Downloading from github...")
+                os.makedirs(bin_dir, exist_ok=True)
+                url = "https://github.com/DanielMYT/tesseract-static/releases/download/v5.3.0/tesseract.x86_64"
+                try:
+                    urllib.request.urlretrieve(url, tess_exe)
+                    st = os.stat(tess_exe)
+                    os.chmod(tess_exe, st.st_mode | stat.S_IEXEC)
+                    print(f"[TESS-DIAG] Downloaded tesseract static binary to {tess_exe}")
+                except Exception as e:
+                    print(f"[TESS-DIAG] ERROR downloading static binary: {e}")
+            
+            # Download eng.traineddata if not exists
+            tessdata_file = os.path.join(tessdata_dir, "eng.traineddata")
+            if not os.path.exists(tessdata_file):
+                print("[TESS-DIAG] eng.traineddata not found locally. Downloading...")
+                os.makedirs(tessdata_dir, exist_ok=True)
+                url_data = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
+                try:
+                    urllib.request.urlretrieve(url_data, tessdata_file)
+                    print(f"[TESS-DIAG] Downloaded eng.traineddata to {tessdata_file}")
+                except Exception as e:
+                    print(f"[TESS-DIAG] ERROR downloading eng.traineddata: {e}")
+            
+            if os.path.exists(tess_exe) and os.path.exists(tessdata_file):
+                os.environ["TESSDATA_PREFIX"] = bin_dir
+                resolved_path = tess_exe
+                print(f"[TESS-DIAG] Using local static binary at {tess_exe} with TESSDATA_PREFIX={bin_dir}")
+
+    # Fallback to default name if still empty
+    if not resolved_path:
+        resolved_path = "tesseract"
+
+    # 4. tesseract --version
     try:
         result = subprocess.run(
             [resolved_path, "--version"],
