@@ -465,13 +465,13 @@ def extract_text(file_path: str, file_type: str) -> str:
         print(f"Extraction failed: {e}")
         traceback.print_exc()
         if file_type in ['pdf', 'application/pdf']:
-            raise TextExtractionError("PDF text extraction failed") from e
+            raise TextExtractionError(f"PDF text extraction failed: {e}") from e
         elif file_type in ['doc', 'docx', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']:
-            raise TextExtractionError("Unsupported file structure") from e
+            raise TextExtractionError(f"Unsupported file structure: {e}") from e
         elif file_type in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
-            raise TextExtractionError("OCR extraction failed") from e
+            raise TextExtractionError(f"OCR extraction failed: {e}") from e
         else:
-            raise TextExtractionError("Unsupported file structure") from e
+            raise TextExtractionError(f"Unsupported file structure: {e}") from e
 
     # OCR Fallback if text is empty
     if not text.strip():
