@@ -167,6 +167,7 @@ def _log_tesseract_diagnostics() -> str:
                     print(f"[TESS-DIAG] Downloaded tesseract static binary to {tess_exe}")
                 except Exception as e:
                     print(f"[TESS-DIAG] ERROR downloading static binary: {e}")
+                    globals()["_last_tess_download_err"] = f"Binary Download: {str(e)}"
             
             # Download eng.traineddata if not exists
             tessdata_file = os.path.join(tessdata_dir, "eng.traineddata")
@@ -179,6 +180,7 @@ def _log_tesseract_diagnostics() -> str:
                     print(f"[TESS-DIAG] Downloaded eng.traineddata to {tessdata_file}")
                 except Exception as e:
                     print(f"[TESS-DIAG] ERROR downloading eng.traineddata: {e}")
+                    globals()["_last_tess_download_err"] = f"Tessdata Download: {str(e)}"
             
             if os.path.exists(tess_exe) and os.path.exists(tessdata_file):
                 os.environ["TESSDATA_PREFIX"] = bin_dir
@@ -335,9 +337,18 @@ def extract_text_from_image(file_path: str) -> str:
         extracted_text = pytesseract.image_to_string(preprocessed_img)
         print(f"[OCR] pytesseract.image_to_string() returned {len(extracted_text)} characters")
     except pytesseract.TesseractNotFoundError as tnf:
-        print(f"[OCR] CRITICAL: TesseractNotFoundError — {tnf}")
+        diag_msg = f"Tesseract OCR engine not found on server. Resolved Path: {resolved_tess_path!r}, Cmd: {pytesseract.pytesseract.tesseract_cmd!r}"
+        if sys.platform.startswith("linux"):
+            bin_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "bin")
+            tess_exe = os.path.join(bin_dir, "tesseract-static")
+            tessdata_file = os.path.join(bin_dir, "tessdata", "eng.traineddata")
+            diag_msg += f" | Static Exe Exists: {os.path.exists(tess_exe)}, Tessdata Exists: {os.path.exists(tessdata_file)}"
+            global_last_err = globals().get("_last_tess_download_err", "None")
+            diag_msg += f" | Last Download Error: {global_last_err}"
+            
+        print(f"[OCR] CRITICAL: TesseractNotFoundError — {diag_msg}")
         traceback.print_exc()
-        raise TextExtractionError("Tesseract OCR engine not found on server.") from tnf
+        raise TextExtractionError(diag_msg) from tnf
     except Exception as ocr_err:
         print(f"[OCR] pytesseract.image_to_string() raised: {ocr_err}")
         traceback.print_exc()
