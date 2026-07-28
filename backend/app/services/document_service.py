@@ -153,6 +153,15 @@ def _log_tesseract_diagnostics() -> str:
             tessdata_dir = os.path.join(bin_dir, "tessdata")
             tess_exe = os.path.join(bin_dir, "tesseract-static")
             
+            # Helper to download with custom User-Agent
+            def _download(url, dest):
+                req = urllib.request.Request(
+                    url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                )
+                with urllib.request.urlopen(req) as response, open(dest, 'wb') as out_file:
+                    out_file.write(response.read())
+
             print(f"[TESS-DIAG] System tesseract not found. Checking static binary fallback at: {tess_exe}")
             
             # Download binary if not exists
@@ -161,7 +170,7 @@ def _log_tesseract_diagnostics() -> str:
                 os.makedirs(bin_dir, exist_ok=True)
                 url = "https://github.com/DanielMYT/tesseract-static/releases/download/v5.3.0/tesseract.x86_64"
                 try:
-                    urllib.request.urlretrieve(url, tess_exe)
+                    _download(url, tess_exe)
                     st = os.stat(tess_exe)
                     os.chmod(tess_exe, st.st_mode | stat.S_IEXEC)
                     print(f"[TESS-DIAG] Downloaded tesseract static binary to {tess_exe}")
@@ -176,7 +185,7 @@ def _log_tesseract_diagnostics() -> str:
                 os.makedirs(tessdata_dir, exist_ok=True)
                 url_data = "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata"
                 try:
-                    urllib.request.urlretrieve(url_data, tessdata_file)
+                    _download(url_data, tessdata_file)
                     print(f"[TESS-DIAG] Downloaded eng.traineddata to {tessdata_file}")
                 except Exception as e:
                     print(f"[TESS-DIAG] ERROR downloading eng.traineddata: {e}")
