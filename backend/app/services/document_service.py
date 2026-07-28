@@ -166,8 +166,9 @@ def preprocess_image_pillow(file_path: str):
     Preprocess the image using Pillow only (no OpenCV dependency).
     Steps:
       1. Open with Pillow — handles EXIF orientation automatically.
-      2. Convert to RGB (removes alpha, handles palette modes).
+      2. Convert RGBA/LA or P with transparency to RGB using a white background paste.
       3. Convert to grayscale (L mode) for better OCR accuracy.
+      4. Sharpen.
     Returns a PIL Image object ready for pytesseract.
     """
     from PIL import Image, ImageOps, ImageFilter
@@ -175,83 +176,160 @@ def preprocess_image_pillow(file_path: str):
     with Image.open(file_path) as pil_img:
         # Fix EXIF orientation
         pil_img = ImageOps.exif_transpose(pil_img)
-        # Convert to RGB first (handles RGBA, P/palette, etc.)
-        pil_img = pil_img.convert("RGB")
-        # Convert to grayscale for OCR
+        
+        # Transparent PNG / Alpha Channel paste on white background
+        if pil_img.mode in ("RGBA", "LA") or (pil_img.mode == "P" and "transparency" in pil_img.info):
+            background = Image.new("RGBA", pil_img.size, (255, 255, 255, 255))
+            if pil_img.mode == "P":
+                pil_img = pil_img.convert("RGBA")
+            background.paste(pil_img, (0, 0), pil_img)
+            pil_img = background.convert("RGB")
+        else:
+            pil_img = pil_img.convert("RGB")
+            
         gray = pil_img.convert("L")
-        # Mild sharpening to improve character definition
         sharpened = gray.filter(ImageFilter.SHARPEN)
-        # Return a copy so the context manager doesn't close it prematurely
         return sharpened.copy()
 
 
 def extract_text_from_image(file_path: str) -> str:
     """
     Extract text from images using Pillow + pytesseract.
-    
-    Diagnostic flow:
-      1. Log tesseract binary availability (path, which, --version).
-      2. Preprocess image with Pillow (EXIF correction, grayscale).
-      3. Run pytesseract.image_to_string().
-      4. Log extracted text length.
-      5. If length == 0 → raise TextExtractionError (do NOT proceed to Groq).
     """
-    print("[IMAGE] Image received")
-    print("[OCR] OCR started — engine: pytesseract (Pillow preprocessing)")
-
-    # --- Step 1: Tesseract diagnostics ---
-    resolved_tess_path = _log_tesseract_diagnostics()
-
-    # --- Step 2: Configure pytesseract binary path ---
+    import os
+    import mimetypes
+    import traceback
+    from PIL import Image
     import pytesseract
     from app.core.config import settings
 
+    # 1. Logging input details
+    filename = os.path.basename(file_path)
+    file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+    exists = os.path.exists(file_path)
+    _, file_ext = os.path.splitext(filename)
+    file_ext = file_ext.lstrip('.').lower()
+    guessed_mime, _ = mimetypes.guess_type(file_path)
+
+    print("=== [OCR-FLOW] Image Upload / Process Entry ===")
+    print(f"  - Uploaded Filename: {filename}")
+    print(f"  - Temporary File Path: {file_path}")
+    print(f"  - File Exists on Disk: {exists}")
+    print(f"  - File Size: {file_size} bytes")
+    print(f"  - File Extension: {file_ext}")
+    print(f"  - Detected MIME Type: {guessed_mime}")
+    
+    # Verify MIME detection values specifically
+    print(f"[MIME-VERIFY] Filename: {filename}, Ext: {file_ext}, MIME: {guessed_mime}")
+
+    # 2. Verify original image details
+    orig_format = None
+    orig_mode = None
+    orig_size = None
+    try:
+        with Image.open(file_path) as orig_img:
+            orig_format = orig_img.format
+            orig_mode = orig_img.mode
+            orig_size = orig_img.size
+            print(f"  - Original PIL Image Format: {orig_format}")
+            print(f"  - Original PIL Image Mode: {orig_mode}")
+            print(f"  - Original PIL Image Size: {orig_size}")
+    except Exception as img_err:
+        print(f"[OCR-FLOW] Failed to load original image via Pillow: {img_err}")
+        traceback.print_exc()
+
+    # --- Step 1: Tesseract diagnostics ---
+    resolved_tess_path = _log_tesseract_diagnostics()
+    print(f"  - Tesseract Executable Path: {resolved_tess_path!r}")
+
+    # --- Step 2: Configure pytesseract binary path ---
     if resolved_tess_path and os.path.exists(resolved_tess_path):
         pytesseract.pytesseract.tesseract_cmd = resolved_tess_path
         print(f"[OCR] pytesseract.tesseract_cmd set to: {resolved_tess_path!r}")
     else:
-        # Let pytesseract use its own default discovery
         print("[OCR] WARNING: tesseract_cmd not explicitly set — relying on system PATH")
 
-    # --- Step 3: Preprocess image ---
+    # Log pytesseract setting & try to run get_tesseract_version()
+    print(f"  - pytesseract.pytesseract.tesseract_cmd: {pytesseract.pytesseract.tesseract_cmd}")
     try:
-        pil_img = preprocess_image_pillow(file_path)
-        print(f"[OCR] Image preprocessed: size={pil_img.size}, mode={pil_img.mode}")
+        tess_version = pytesseract.get_tesseract_version()
+        print(f"  - Tesseract Engine Version: {tess_version}")
+    except Exception as ver_err:
+        print(f"[OCR-FLOW] Failed to get Tesseract version: {ver_err}")
+        traceback.print_exc()
+
+    # --- Step 3: Preprocess image ---
+    preprocessed_img = None
+    try:
+        preprocessed_img = preprocess_image_pillow(file_path)
+        print(f"[OCR-FLOW] Preprocessing completed. Mode: {preprocessed_img.mode}, Size: {preprocessed_img.size}")
+        
+        # Save a temporary debug image
+        debug_dir = os.path.join(settings.UPLOAD_DIR, "debug")
+        os.makedirs(debug_dir, exist_ok=True)
+        debug_path = os.path.join(debug_dir, f"debug_preprocessed_{filename}")
+        preprocessed_img.save(debug_path)
+        print(f"  - Preprocessed Debug Image Saved to: {debug_path}")
     except Exception as pre_err:
-        print(f"[OCR] Pillow preprocessing failed: {pre_err}. Using raw image.")
-        from PIL import Image
+        print(f"[OCR] Pillow preprocessing failed: {pre_err}. Trying to use raw image.")
+        traceback.print_exc()
         try:
-            pil_img = Image.open(file_path).convert("L")
+            with Image.open(file_path) as raw_img:
+                preprocessed_img = raw_img.convert("L")
         except Exception as raw_err:
+            print(f"[OCR-FLOW] Failed to convert raw image to grayscale: {raw_err}")
+            traceback.print_exc()
             raise TextExtractionError(f"Cannot open image file: {raw_err}") from raw_err
 
     # --- Step 4: Run OCR ---
+    extracted_text = ""
     try:
-        extracted_text = pytesseract.image_to_string(pil_img)
-        print(f"[OCR] pytesseract.image_to_string() returned {len(extracted_text)} chars")
+        extracted_text = pytesseract.image_to_string(preprocessed_img)
+        print(f"[OCR] pytesseract.image_to_string() returned {len(extracted_text)} characters")
     except pytesseract.TesseractNotFoundError as tnf:
         print(f"[OCR] CRITICAL: TesseractNotFoundError — {tnf}")
-        print("[OCR] tesseract-ocr binary is NOT installed or not on PATH.")
-        print("[OCR] Ensure build.sh runs: apt-get install -y tesseract-ocr tesseract-ocr-eng")
+        traceback.print_exc()
         raise TextExtractionError("Tesseract OCR engine not found on server.") from tnf
     except Exception as ocr_err:
         print(f"[OCR] pytesseract.image_to_string() raised: {ocr_err}")
+        traceback.print_exc()
         raise TextExtractionError(f"OCR extraction failed: {ocr_err}") from ocr_err
 
-    # --- Step 5: Validate extracted text ---
+    # --- Step 5: Validate extracted text & analyze failure if empty ---
     stripped_text = extracted_text.strip()
-    print(f"[OCR] Extracted text length (stripped): {len(stripped_text)}")
+    print(f"  - OCR Output Length (stripped): {len(stripped_text)}")
 
     if len(stripped_text) == 0:
         print("[OCR] STOP: extracted_text length is 0. OCR produced no output.")
-        print("[OCR] Possible causes: blank/low-quality image, wrong language pack, Tesseract config.")
-        print("[OCR] NOT proceeding to Groq AI — fixing OCR is required first.")
-        raise TextExtractionError(
-            "No readable text found in image. OCR returned empty output."
-        )
+        
+        # Inspect and determine why OCR is empty
+        reasons = []
+        try:
+            with Image.open(file_path) as test_img:
+                # 1. Blank/Uniform Image test
+                extrema = test_img.convert("L").getextrema()
+                if extrema and extrema[0] == extrema[1]:
+                    reasons.append("Image is completely blank or a single solid color.")
+                
+                # 2. Transparent PNG / Alpha Channel issue
+                if test_img.mode in ("RGBA", "LA") or (test_img.mode == "P" and "transparency" in test_img.info):
+                    reasons.append("Image has an active alpha channel / transparency.")
+                
+                # 3. Small Image size
+                if test_img.size[0] < 50 or test_img.size[1] < 50:
+                    reasons.append(f"Image resolution is extremely low ({test_img.size[0]}x{test_img.size[1]}), characters are too small to resolve.")
+                
+                # 4. Mode check
+                if test_img.mode not in ("1", "L", "RGB", "RGBA", "P"):
+                    reasons.append(f"Image has an unusual pixel format/mode: {test_img.mode}.")
+        except Exception as inspect_err:
+            reasons.append(f"Failed to inspect image features: {inspect_err}")
+            
+        reason_str = " | ".join(reasons) if reasons else "Blank output. Possible causes: no text features, wrong language pack, low image quality/contrast, or severe thresholding/blurring in preprocessing."
+        print(f"[OCR-FAILURE-ANALYSIS] Root cause candidate(s): {reason_str}")
+        raise TextExtractionError(f"No readable text found in image. Reason: {reason_str}")
 
     print("[OCR] OCR completed successfully.")
-    print(f"[OCR] First 200 chars of extracted text: {stripped_text[:200]!r}")
     return stripped_text
 
 

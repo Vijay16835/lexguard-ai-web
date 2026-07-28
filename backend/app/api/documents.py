@@ -94,6 +94,12 @@ async def run_ai_analysis(document_id: str):
             
         file_ext = get_file_extension(doc.name)
         
+        # Verify MIME detection values specifically
+        import mimetypes
+        guessed_mime, _ = mimetypes.guess_type(doc.name)
+        print(f"[MIME-VERIFY] run_ai_analysis: doc.name={doc.name}, file_ext={file_ext}, guessed_mime={guessed_mime}")
+        print(f"[EXTRACT-VERIFY] Calling extract_text(local_path={local_path}, file_type={file_ext})")
+        
         # Text Extraction phase
         try:
             extracted_text = extract_text(local_path, file_ext)
