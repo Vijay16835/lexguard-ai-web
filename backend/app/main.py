@@ -127,6 +127,18 @@ async def tesseract_diagnostics():
         results["tess_path_version_stderr"] = cmd_ver.stderr
     except Exception as e:
         results["tess_path_version_error"] = str(e)
+
+    # 7. File system search for tesseract
+    tess_matches = []
+    try:
+        find_proc = subprocess.run(
+            ["find", "/usr", "/opt", "/var", "/home", "-name", "tesseract", "-type", "f"],
+            capture_output=True, text=True, timeout=15
+        )
+        tess_matches = [line.strip() for line in (find_proc.stdout or "").split("\n") if line.strip()]
+    except Exception as e:
+        results["find_error"] = str(e)
+    results["find_matches"] = tess_matches
         
     return results
 
