@@ -479,19 +479,23 @@ def extract_text(file_path: str, file_type: str) -> str:
         if file_type in ['pdf', 'application/pdf']:
             try:
                 text = ocr_pdf(file_path)
+            except TextExtractionError:
+                raise
             except Exception as ocr_err:
-                raise TextExtractionError("OCR extraction failed") from ocr_err
+                raise TextExtractionError(f"OCR extraction failed: {ocr_err}") from ocr_err
         elif file_type in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
             try:
                 text = extract_text_from_image(file_path)
+            except TextExtractionError:
+                raise
             except Exception as ocr_err:
-                raise TextExtractionError("OCR extraction failed") from ocr_err
+                raise TextExtractionError(f"OCR extraction failed: {ocr_err}") from ocr_err
         else:
             raise TextExtractionError("Unable to extract readable text from document.")
             
     if not text.strip():
         if file_type in ['pdf', 'application/pdf'] or file_type in ['jpg', 'jpeg', 'png', 'image/jpeg', 'image/png', 'image/jpg']:
-            raise TextExtractionError("OCR extraction failed")
+            raise TextExtractionError("OCR extraction failed: No text output after fallback")
         else:
             raise TextExtractionError("Unable to extract readable text from document.")
             
