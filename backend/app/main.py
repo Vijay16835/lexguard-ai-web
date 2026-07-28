@@ -87,61 +87,6 @@ async def test_email_endpoint(recipient: str = None):
             detail=detail
         )
 
-@debug_router.get("/tess-diag")
-async def tesseract_diagnostics():
-    import subprocess
-    import shutil
-    import os
-    import pytesseract
-    
-    results = {}
-    
-    # 1. which tesseract
-    which_tess = shutil.which("tesseract")
-    results["which_tesseract"] = which_tess
-    
-    # 2. tesseract version
-    try:
-        tess_ver_process = subprocess.run(["tesseract", "--version"], capture_output=True, text=True)
-        results["tesseract_version_stdout"] = tess_ver_process.stdout
-        results["tesseract_version_stderr"] = tess_ver_process.stderr
-        results["tesseract_version_code"] = tess_ver_process.returncode
-    except Exception as e:
-        results["tesseract_version_error"] = str(e)
-        
-    # 3. settings / env
-    results["env_tesseract_cmd"] = os.environ.get("TESSERACT_CMD")
-    results["settings_tesseract_cmd"] = getattr(settings, "TESSERACT_CMD", None)
-    
-    # 4. pytesseract info
-    results["pytesseract_cmd"] = pytesseract.pytesseract.tesseract_cmd
-    
-    # 5. system path and other info
-    results["path"] = os.environ.get("PATH")
-    
-    # 6. check python path execution
-    try:
-        tess_path = results["settings_tesseract_cmd"] or which_tess or "tesseract"
-        cmd_ver = subprocess.run([tess_path, "--version"], capture_output=True, text=True)
-        results["tess_path_version_stdout"] = cmd_ver.stdout
-        results["tess_path_version_stderr"] = cmd_ver.stderr
-    except Exception as e:
-        results["tess_path_version_error"] = str(e)
-
-    # 7. File system search for tesseract
-    tess_matches = []
-    try:
-        find_proc = subprocess.run(
-            ["find", "/usr", "/opt", "/var", "/home", "-name", "tesseract", "-type", "f"],
-            capture_output=True, text=True, timeout=15
-        )
-        tess_matches = [line.strip() for line in (find_proc.stdout or "").split("\n") if line.strip()]
-    except Exception as e:
-        results["find_error"] = str(e)
-    results["find_matches"] = tess_matches
-        
-    return results
-
 app.include_router(debug_router, prefix=f"{settings.API_V1_STR}/debug", tags=["debug"])
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["authentication"])
 app.include_router(documents.router, prefix=f"{settings.API_V1_STR}/documents", tags=["documents"])
