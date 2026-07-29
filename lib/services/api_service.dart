@@ -17,10 +17,11 @@ class ApiService {
     _dio = Dio(
       BaseOptions(
         baseUrl: ApiConstants.baseUrl,
-        // Increased to 45s to handle backend cold starts (Render free tier spin-up)
-        connectTimeout: const Duration(seconds: 45),
-        receiveTimeout: const Duration(seconds: 45),
-        sendTimeout: const Duration(seconds: 45),
+        // Increased to 180s to handle Render free-tier cold starts (spin-up ~60-90s)
+        // plus upload processing time (~20-30s). Total worst-case ~120-130s.
+        connectTimeout: const Duration(seconds: 60),
+        receiveTimeout: const Duration(seconds: 180),
+        sendTimeout: const Duration(seconds: 180),
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',

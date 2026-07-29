@@ -56,6 +56,7 @@ class _UploadScreenState extends State<UploadScreen> {
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'docx', 'doc', 'txt', 'jpg', 'jpeg', 'png', 'webp'],
+      withData: true, // Required on Flutter Web: loads file.bytes; without this, bytes is null and upload fails immediately
     );
 
     if (result != null) {

@@ -216,7 +216,8 @@ class AuthProvider extends ChangeNotifier {
         final GoogleAuthProvider googleProvider = GoogleAuthProvider();
         googleProvider.addScope('email');
         googleProvider.addScope('profile');
-        
+        googleProvider.setCustomParameters({'prompt': 'select_account'});
+
         final UserCredential userCredential =
             await _firebaseAuth.signInWithPopup(googleProvider);
         firebaseUser = userCredential.user;
@@ -224,7 +225,6 @@ class AuthProvider extends ChangeNotifier {
           idToken = await firebaseUser.getIdToken();
         }
       } else {
-        // Initialize once per provider lifetime for mobile
         if (!_googleInitialized) {
           await _googleSignIn.initialize();
           _googleInitialized = true;

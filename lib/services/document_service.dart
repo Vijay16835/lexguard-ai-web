@@ -30,37 +30,92 @@ class DocumentService {
 
   /// Upload a document file
   Future<Map<String, dynamic>> uploadDocument(PlatformFile file) async {
+    // ── Step 1: File selection audit ─────────────────────────────────────────
+    debugPrint('[Upload] STEP 1 — File audit:');
+    debugPrint('[Upload]   name     = ${file.name}');
+    debugPrint('[Upload]   size     = ${file.size} bytes');
+    debugPrint('[Upload]   path     = ${file.path ?? "NULL"}');
+    debugPrint('[Upload]   bytes    = ${file.bytes != null ? "${file.bytes!.length} bytes loaded" : "NULL (withData not set?)"}');
+    debugPrint('[Upload]   kIsWeb   = $kIsWeb');
+
+    // ── Step 2: Build MultipartFile ──────────────────────────────────────────
+    // Strategy: prefer in-memory bytes (works on Web AND Android content:// URIs).
+    // Fall back to file path only on desktop where real filesystem paths exist.
+    debugPrint('[Upload] STEP 2 — Building MultipartFile...');
+    MultipartFile multipartFile;
     try {
-      MultipartFile multipartFile;
-      if (kIsWeb) {
-        final bytes = file.bytes;
-        if (bytes == null) {
-          return {'success': false, 'message': 'File bytes are empty'};
-        }
+      final bytes = file.bytes;
+      if (bytes != null && bytes.isNotEmpty) {
+        // Bytes already loaded (withData: true) — works on every platform.
+        debugPrint('[Upload]   Using in-memory bytes (${bytes.length} bytes).');
         multipartFile = MultipartFile.fromBytes(bytes, filename: file.name);
-      } else {
-        if (file.path == null) {
-          return {'success': false, 'message': 'File path is missing'};
+      } else if (!kIsWeb && file.path != null) {
+        // Desktop/mobile fallback: only if path is a real filesystem path.
+        // NOTE: On Android 13+ file_picker returns content:// URIs.
+        // If bytes are null and path is a content URI, this WILL throw.
+        final pathStr = file.path!;
+        final isContentUri = pathStr.startsWith('content://');
+        debugPrint('[Upload]   Using file path: $pathStr');
+        debugPrint('[Upload]   Is content URI: $isContentUri');
+        if (isContentUri) {
+          debugPrint('[Upload]   ERROR: content:// URI detected but bytes are null.');
+          debugPrint('[Upload]   FIX: ensure withData: true is passed to FilePicker.pickFiles()');
+          return {
+            'success': false,
+            'message': 'Upload failed: File bytes could not be loaded. '
+                'This is an Android content URI — ensure withData: true in FilePicker.',
+          };
         }
-        multipartFile = await MultipartFile.fromFile(file.path!, filename: file.name);
+        final dartFile = File(pathStr);
+        final exists = dartFile.existsSync();
+        final length = exists ? dartFile.lengthSync() : 0;
+        debugPrint('[Upload]   File.existsSync() = $exists');
+        debugPrint('[Upload]   File.lengthSync()  = $length bytes');
+        if (!exists) {
+          return {'success': false, 'message': 'Upload failed: File not found at path: $pathStr'};
+        }
+        multipartFile = await MultipartFile.fromFile(pathStr, filename: file.name);
+      } else {
+        // No bytes and no valid path.
+        final reason = kIsWeb
+            ? 'on Flutter Web, withData: true must be passed to FilePicker'
+            : 'file.path is null and file.bytes is null';
+        debugPrint('[Upload]   ERROR: Cannot build MultipartFile — $reason');
+        return {'success': false, 'message': 'Upload failed: No file data available ($reason)'};
       }
+    } catch (e, stack) {
+      debugPrint('[Upload]   EXCEPTION building MultipartFile: ${e.runtimeType}: $e');
+      debugPrint('[Upload]   Stack:\n$stack');
+      return {'success': false, 'message': 'Upload failed (MultipartFile): ${e.runtimeType}: $e'};
+    }
 
-      FormData formData = FormData.fromMap({
-        'file': multipartFile,
-      });
+    // ── Step 3: Build FormData ───────────────────────────────────────────────
+    debugPrint('[Upload] STEP 3 — Building FormData...');
+    final FormData formData = FormData.fromMap({'file': multipartFile});
 
-      final response = await _dio.post(
-        ApiConstants.uploadDocument,
-        data: formData,
-      );
+    // ── Step 4: HTTP POST ────────────────────────────────────────────────────
+    final uploadUrl = ApiConstants.uploadDocument;
+    debugPrint('[Upload] STEP 4 — Posting to: $uploadUrl');
+    try {
+      final response = await _dio.post(uploadUrl, data: formData);
+      debugPrint('[Upload] STEP 4 — HTTP ${response.statusCode} received.');
       return {'success': true, 'data': response.data};
     } on DioException catch (e) {
+      final statusCode = e.response?.statusCode;
+      final body = e.response?.data;
+      final detail = body is Map ? body['detail'] : body?.toString();
+      debugPrint('[Upload] STEP 4 — DioException: ${e.type} | HTTP $statusCode');
+      debugPrint('[Upload]   response body: $body');
+      debugPrint('[Upload]   error message: ${e.message}');
+      debugPrint('[Upload]   stack: ${e.stackTrace}');
       return {
         'success': false,
-        'message': e.response?.data?['detail'] ?? 'Upload failed',
+        'message': detail ?? e.message ?? 'Upload failed (HTTP $statusCode)',
       };
-    } catch (e) {
-      return {'success': false, 'message': 'Upload failed: $e'};
+    } catch (e, stack) {
+      debugPrint('[Upload] STEP 4 — Unexpected exception: ${e.runtimeType}: $e');
+      debugPrint('[Upload]   Stack:\n$stack');
+      return {'success': false, 'message': 'Upload failed: ${e.runtimeType}: $e'};
     }
   }
 
