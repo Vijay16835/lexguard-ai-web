@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  FLUTTER_VERSION: '3.24.x'
+  FLUTTER_VERSION: '3.44.8'
   NODE_VERSION: '18'
   JAVA_VERSION: '17'
 
