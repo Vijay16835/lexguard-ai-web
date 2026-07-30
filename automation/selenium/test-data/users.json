@@ -1,0 +1,11 @@
+{
+  "validUser": {
+    "email": "tvijay1098@gmail.com",
+    "password": "CorrectPassword123",
+    "fullName": "Vijay T"
+  },
+  "invalidUser": {
+    "email": "invalid_user@lexguard.ai",
+    "password": "WrongPassword123"
+  }
+}

@@ -1,81 +1,70 @@
-# Miscellaneous
-*.class
-*.log
-*.pyc
-*.swp
-.DS_Store
-.atom/
-.build/
-.buildlog/
-.history
-.svn/
-.swiftpm/
-migrate_working_dir/
+# ==============================================================================
+# LexGuard AI - SCM Git Ignore Rules
+# ==============================================================================
 
-# IntelliJ related
-*.iml
-*.ipr
-*.iws
-.idea/
+# Automation Generated Output Directories
+Test Results/
+Artifacts/
+artifacts/
+History/
+ExecutionResults/
+security-audit-reports/
+allure-results/
+allure-report/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# Generated Temporary Files & Binaries
+*.tmp
+*.cache
+*.bak
+*.old
+*.coverage
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
-.dart_tool/
-.flutter-plugins-dependencies
-.pub-cache/
-.pub/
-/build/
-/coverage/
+# Exceptions: Retain JSON test data and YAML configs
+!*.json
+!*.yaml
+!*.yml
 
-# Symbolication related
-app.*.symbols
+# Node.js Dependencies & Cache
+node_modules/
 
-# Obfuscation related
-app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
-
-# Python
+# Python Virtual Environments & PyCache
 venv/
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-
-# Node.js
-node_modules/
-.env*
-!.env.example
-
-# Custom tools
-oracleJdk-26/
-.agents/
-
-# Backend uploads, db, and secrets
-backend/firebase_credentials.json
-firebase_credentials.json
-backend/uploads/
-backend/vector_db/
-*.pdf
-
-
-
-*.tmp
-*.bak
-*.old
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Flutter & Dart Build Output
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+
+# Android Build Output & Gradle Cache
+android/.gradle/
+android/app/build/
+android/app/debug/
+android/app/profile/
+android/app/release/
+
+# Operating System & IDE Files
+.DS_Store
+Thumbs.db
+*.class
+*.swp
+.idea/
+
+# Backend Secrets & Upload Storage
+backend/firebase_credentials.json
+firebase_credentials.json
+backend/uploads/
+backend/vector_db/
 backend/scratch/

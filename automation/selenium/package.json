@@ -1,0 +1,41 @@
+{
+  "name": "lexguard-ai-selenium-automation",
+  "version": "2.0.0",
+  "description": "Enterprise End-to-End Selenium Automation Framework for LexGuard AI Web Application",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha --config .mocharc.js tests/*.test.js",
+    "test:chrome": "cross-env BROWSER=chrome HEADLESS=true mocha --config .mocharc.js tests/*.test.js",
+    "test:firefox": "cross-env BROWSER=firefox HEADLESS=true mocha --config .mocharc.js tests/*.test.js",
+    "test:edge": "cross-env BROWSER=edge HEADLESS=true mocha --config .mocharc.js tests/*.test.js",
+    "report": "node utils/report-generator.js",
+    "report:excel": "node utils/report-generator.js --excel-only",
+    "report:html": "node utils/report-generator.js --html-only"
+  },
+  "keywords": [
+    "selenium",
+    "webdriver",
+    "nodejs",
+    "mocha",
+    "chai",
+    "e2e-testing",
+    "lexguard-ai",
+    "web-automation"
+  ],
+  "author": "LexGuard QA Automation Team",
+  "license": "MIT",
+  "dependencies": {
+    "chai": "^4.3.10",
+    "chromedriver": "^119.0.1",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.3.1",
+    "exceljs": "^4.4.0",
+    "fs-extra": "^11.2.0",
+    "geckodriver": "^4.2.1",
+    "mocha": "^10.2.0",
+    "mochawesome": "^7.1.3",
+    "mochawesome-report-generator": "^6.2.0",
+    "selenium-webdriver": "^4.15.0",
+    "winston": "^3.11.0"
+  }
+}

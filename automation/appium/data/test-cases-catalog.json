@@ -1,0 +1,78 @@
+{
+  "totalTestCases": 400,
+  "framework": "Appium 2.x + WebdriverIO (TypeScript)",
+  "application": "LexGuard AI – Legal Document Analyzer (Android)",
+  "modules": [
+    {
+      "module": "Authentication",
+      "count": 40,
+      "testCases": [
+        { "id": "AUTH_001", "title": "Verify Launch Splash Screen Display", "priority": "P0", "steps": ["Launch app", "Verify logo"], "expected": "Splash logo visible" },
+        { "id": "AUTH_002", "title": "Verify Email Login with Valid Credentials", "priority": "P0", "steps": ["Enter email", "Enter pass", "Click Login"], "expected": "Navigate to Dashboard" },
+        { "id": "AUTH_003", "title": "Verify Invalid Email Login Error", "priority": "P1", "steps": ["Enter invalid email", "Click Login"], "expected": "Error message displayed" },
+        { "id": "AUTH_004", "title": "Verify Empty Password Validation", "priority": "P1", "steps": ["Enter email", "Leave pass empty"], "expected": "Validation error" },
+        { "id": "AUTH_005", "title": "Verify Google Sign-In Flow Initialization", "priority": "P0", "steps": ["Click Google Sign-In"], "expected": "Google OAuth prompt" },
+        { "id": "AUTH_006", "title": "Verify Session Token Persistence on Re-launch", "priority": "P0", "steps": ["Close app", "Re-open"], "expected": "User remains logged in" },
+        { "id": "AUTH_007", "title": "Verify Password Masking / Unmasking Eye Icon", "priority": "P2", "steps": ["Type password", "Click Eye icon"], "expected": "Text toggles visibility" },
+        { "id": "AUTH_008", "title": "Verify Account Lockout on Multiple Invalid Attempts", "priority": "P1", "steps": ["Fail 5 logins"], "expected": "Temporary lock alert" },
+        { "id": "AUTH_009", "title": "Verify Remember Me Checkbox Selection", "priority": "P2", "steps": ["Check Remember Me", "Login"], "expected": "Credentials cached" },
+        { "id": "AUTH_010", "title": "Verify Network Interruption During Login Request", "priority": "P1", "steps": ["Turn off wifi", "Click login"], "expected": "Offline alert" }
+      ]
+    },
+    {
+      "module": "Registration",
+      "count": 30,
+      "testCases": [
+        { "id": "REG_001", "title": "Verify User Registration with Valid Data", "priority": "P0", "steps": ["Enter name, email, pass", "Click Register"], "expected": "OTP screen" },
+        { "id": "REG_002", "title": "Verify Existing Email Registration Rejection", "priority": "P1", "steps": ["Enter existing email", "Click Register"], "expected": "Email taken error" },
+        { "id": "REG_003", "title": "Verify Weak Password Strength Indicator", "priority": "P2", "steps": ["Type '123'"], "expected": "Weak password warning" },
+        { "id": "REG_004", "title": "Verify Email Format Validation", "priority": "P1", "steps": ["Type 'user@'"], "expected": "Invalid format alert" },
+        { "id": "REG_005", "title": "Verify Registration Terms Agreement Switch", "priority": "P1", "steps": ["Uncheck Terms"], "expected": "Register button disabled" }
+      ]
+    },
+    {
+      "module": "Forgot Password",
+      "count": 20,
+      "testCases": [
+        { "id": "FP_001", "title": "Verify Forgot Password Reset OTP Request", "priority": "P0", "steps": ["Enter email", "Click Send OTP"], "expected": "OTP sent toast" },
+        { "id": "FP_002", "title": "Verify Resend OTP Countdown Timer", "priority": "P2", "steps": ["Click Resend"], "expected": "60s countdown starts" }
+      ]
+    },
+    {
+      "module": "Dashboard",
+      "count": 20,
+      "testCases": [
+        { "id": "DASH_001", "title": "Verify Total Documents Metric Card", "priority": "P0", "steps": ["View dashboard"], "expected": "Card displays count" },
+        { "id": "DASH_002", "title": "Verify High Risk Metric Card Color Badge", "priority": "P1", "steps": ["View dashboard"], "expected": "Red risk indicator" }
+      ]
+    },
+    {
+      "module": "Document Upload",
+      "count": 40,
+      "testCases": [
+        { "id": "UPL_001", "title": "Verify Valid PDF Document Upload", "priority": "P0", "steps": ["Select sample.pdf", "Upload"], "expected": "Upload successful" },
+        { "id": "UPL_002", "title": "Verify DOCX Format Upload", "priority": "P1", "steps": ["Select contract.docx", "Upload"], "expected": "Upload successful" },
+        { "id": "UPL_003", "title": "Verify Unsupported Executable Format Rejection", "priority": "P1", "steps": ["Select app.exe"], "expected": "Format rejected" },
+        { "id": "UPL_004", "title": "Verify Upload Cancellation Mid-Progress", "priority": "P2", "steps": ["Start upload", "Click Cancel"], "expected": "Upload aborted" }
+      ]
+    },
+    {
+      "module": "AI Document Analysis",
+      "count": 40,
+      "testCases": [
+        { "id": "AI_001", "title": "Verify OCR Extraction from Uploaded Image", "priority": "P0", "steps": ["Upload image", "Run OCR"], "expected": "Text extracted" },
+        { "id": "AI_002", "title": "Verify High Risk Clause Highlighting", "priority": "P0", "steps": ["View analysis"], "expected": "Indemnity highlighted" }
+      ]
+    },
+    { "module": "Document History", "count": 25, "testCases": [{ "id": "HIST_001", "title": "Verify History Document Search", "priority": "P1", "steps": ["Search 'NDA'"], "expected": "Filtered list" }] },
+    { "module": "Search", "count": 20, "testCases": [{ "id": "SCH_001", "title": "Verify Global Keyword Search", "priority": "P1", "steps": ["Search 'Liability'"], "expected": "Matching documents" }] },
+    { "module": "Notifications", "count": 20, "testCases": [{ "id": "NOTIF_001", "title": "Verify Analysis Complete Push Notification", "priority": "P1", "steps": ["Trigger completion"], "expected": "Notification badge" }] },
+    { "module": "Profile Management", "count": 20, "testCases": [{ "id": "PROF_001", "title": "Verify Edit Full Name Field", "priority": "P1", "steps": ["Update name", "Save"], "expected": "Profile updated" }] },
+    { "module": "Settings", "count": 15, "testCases": [{ "id": "SETT_001", "title": "Verify Dark Theme Mode Toggle", "priority": "P2", "steps": ["Toggle theme"], "expected": "UI colors switch" }] },
+    { "module": "Session Management", "count": 15, "testCases": [{ "id": "SESS_001", "title": "Verify Session Timeout After Inactivity", "priority": "P1", "steps": ["Idle 30m"], "expected": "Redirect to login" }] },
+    { "module": "Error Handling", "count": 20, "testCases": [{ "id": "ERR_001", "title": "Verify Backend 500 Internal Server Error Toast", "priority": "P1", "steps": ["Simulate 500"], "expected": "Friendly error alert" }] },
+    { "module": "File Validation", "count": 20, "testCases": [{ "id": "FILE_001", "title": "Verify Empty 0-byte File Upload Protection", "priority": "P1", "steps": ["Select empty file"], "expected": "File empty error" }] },
+    { "module": "Performance Smoke Tests", "count": 20, "testCases": [{ "id": "PERF_001", "title": "Verify Dashboard Render Under 2 Seconds", "priority": "P1", "steps": ["Measure render time"], "expected": "Render time < 2000ms" }] },
+    { "module": "Regression Suite", "count": 60, "testCases": [{ "id": "REG_001", "title": "Verify End-to-End Upload to Risk Analysis Pipeline", "priority": "P0", "steps": ["Upload", "Analyze", "Verify Risk"], "expected": "Complete flow pass" }] }
+  ]
+}
