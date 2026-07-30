@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 env:
-  FLUTTER_VERSION: '3.24.x'
+  FLUTTER_VERSION: '3.44.8'
   NODE_VERSION: '18'
   DEFAULT_BASE_URL: 'https://vijay16835.github.io/pdd/'
 
