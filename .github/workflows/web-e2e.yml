@@ -123,7 +123,7 @@ jobs:
           cp -r automation/selenium/reports/* reports/ 2>/dev/null || true
 
       # ── 12. Upload All Generated Reports as GitHub Artifacts ────────────────
-      - name: 13. Upload Automation Report Artifacts (Retention: 30 Days)
+      - name: "13. Upload Automation Report Artifacts"
         if: always()
         uses: actions/upload-artifact@v4
         with:
