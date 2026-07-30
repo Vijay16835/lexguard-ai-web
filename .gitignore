@@ -34,6 +34,8 @@ allure-report/
 *.bak
 *.old
 *.coverage
+project_inventory_report.md
+final_validation_report.md
 
 # Exception rules: Retain test data and framework configuration files
 !automation/**/*.json
