@@ -27,8 +27,8 @@ export const config: WebdriverIO.Config = {
     'appium:deviceName': process.env.ANDROID_DEVICE_NAME || 'Android Emulator',
     'appium:platformVersion': process.env.ANDROID_PLATFORM_VERSION || '13.0',
     'appium:app': process.env.APK_PATH || path.join(__dirname, '../../build/app/outputs/flutter-apk/app-debug.apk'),
-    'appium:appPackage': 'com.lexguard.ai',
-    'appium:appActivity': 'com.lexguard.ai.MainActivity',
+    'appium:appPackage': process.env.APP_PACKAGE || 'com.lexguard.lexguard_ai',
+    'appium:appActivity': process.env.APP_ACTIVITY || 'com.lexguard.lexguard_ai.MainActivity',
     'appium:autoGrantPermissions': true,
     'appium:noReset': false,
     'appium:newCommandTimeout': 180
