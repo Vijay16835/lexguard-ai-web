@@ -2,25 +2,44 @@
 # LexGuard AI - SCM Git Ignore Rules
 # ==============================================================================
 
-# Automation Generated Output Directories
-Test Results/
+# Automation Runtime Generated Output Directories & Files (Ignored in Git)
+reports/
+Reports/
+automation/selenium/reports/
+automation/appium/reports/
+automation/reports/
 Artifacts/
 artifacts/
-History/
+Test Results/
 ExecutionResults/
 security-audit-reports/
 allure-results/
 allure-report/
 
-# Generated Temporary Files & Binaries
+# Generated Report Binaries, Screenshots & Execution Logs
+*.xlsx
+*.xls
+*.csv
+*.html
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.bmp
+*.tiff
+*.zip
+*.log
 *.tmp
 *.cache
 *.bak
 *.old
 *.coverage
 
-# Exceptions: Retain JSON test data and YAML configs
-!*.json
+# Exception rules: Retain test data and framework configuration files
+!automation/**/*.json
+!automation/**/*.ts
+!automation/**/*.js
+!automation/**/*.md
 !*.yaml
 !*.yml
 
