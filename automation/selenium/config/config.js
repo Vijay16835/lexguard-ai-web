@@ -2,7 +2,7 @@ const path = require('path');
 require('dotenv').config();
 
 module.exports = {
-  baseUrl: process.env.BASE_URL || 'https://vijay16835.github.io/lexguard-ai-web/',
+  baseUrl: process.env.BASE_URL || 'https://vijay16835.github.io/pdd/',
   browser: process.env.BROWSER || 'chrome',
   headless: process.env.HEADLESS !== 'false', // default to true in CI
   implicitWaitMs: parseInt(process.env.IMPLICIT_WAIT_MS || '10000', 10),

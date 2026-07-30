@@ -53,7 +53,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: 'automation/appium/package.json'
+          cache-dependency-path: 'automation/appium/package-lock.json'
 
       - name: 6. Install Appium CLI & UiAutomator2 Driver
         run: |
@@ -74,8 +74,11 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: Nexus 6
+          disable-animations: true
           script: |
-            echo "Checking ADB device connection..."
+            echo "Waiting for ADB device..."
+            adb wait-for-device
+            echo "Checking connected ADB devices..."
             adb devices
             echo "Installing debug APK onto emulator..."
             adb install build/app/outputs/flutter-apk/app-debug.apk || true

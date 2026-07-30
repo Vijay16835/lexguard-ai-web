@@ -36,7 +36,7 @@ jobs:
         continue-on-error: true
 
       - name: Build Web
-        run: flutter build web --release --base-href="/lexguard-ai-web/"
+        run: flutter build web --release --base-href="/pdd/"
 
       - name: Prepare 404 Page for Routing
         run: cp build/web/index.html build/web/404.html
