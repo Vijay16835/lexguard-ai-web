@@ -1,131 +1,523 @@
-name: LexGuard AI Android – Appium E2E Automation & CI/CD Pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+# LexGuard AI — Android Appium E2E Automation Pipeline
+# Version: 3.0.0 | Maintainer: LexGuard QA Automation Team
+#
+# Execution Flow:
+#   build-apk → appium-e2e (emulator + install + run) → report-summary
+#
+# Key Features:
+#   - Flutter Android APK build (debug)
+#   - Android 13 emulator (API 33, x86_64, google_apis, hardware KVM)
+#   - ADB readiness probing with retry
+#   - APK installation + Appium 2.x server startup
+#   - UiAutomator2 driver for native Android automation
+#   - Full report generation: Excel, HTML, JSON, Markdown
+#   - Screenshot capture on failure
+#   - GitHub Job Summary with KPI metrics
+#   - Artifact upload with 30-day retention (always)
+#   - Workflow fails ONLY when tests actually fail
+#
+# Runner: macos-13 (required for Android emulator hardware acceleration)
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: 📱 LexGuard AI — Android Appium E2E Automation
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
+    inputs:
+      api_level:
+        description: 'Android API Level (29/30/31/32/33)'
+        required: false
+        default: '33'
+        type: choice
+        options: ['29', '30', '31', '32', '33']
+      test_suite:
+        description: 'Test suite to run (all / auth / dashboard / ocr / ai / history / settings / regression)'
+        required: false
+        default: 'all'
+      build_type:
+        description: 'APK build type'
+        required: false
+        default: 'debug'
+        type: choice
+        options: ['debug', 'profile']
+
+# Cancel stale runs on the same branch
+concurrency:
+  group: android-e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
+# ── Global Environment ─────────────────────────────────────────────────────────
 env:
-  FLUTTER_VERSION: '3.24.x'
-  NODE_VERSION: '18'
+  FLUTTER_VERSION: '3.44.8'
   JAVA_VERSION: '17'
+  NODE_VERSION: '20'
+  ANDROID_API_LEVEL: '33'
+  ANDROID_TARGET: 'google_apis'
+  ANDROID_ARCH: 'x86_64'
+  ANDROID_PROFILE: 'pixel_5'
+  APPIUM_VERSION: 'latest'
+  ARTIFACT_RETENTION_DAYS: '30'
+  ARTIFACT_NAME: 'LexGuard-Android-Appium-E2E-Reports'
+  APK_PATH: 'build/app/outputs/flutter-apk/app-debug.apk'
 
+# ══════════════════════════════════════════════════════════════════════════════
 jobs:
-  build-and-run-appium:
-    name: 📱 Build APK, Start Emulator & Run Appium 400+ E2E Tests
-    runs-on: macos-13
-    timeout-minutes: 90
+# ── Job 1: Build Android APK ──────────────────────────────────────────────────
+  build-apk:
+    name: 🔨 Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      build_status: ${{ job.status }}
+      apk_path: ${{ env.APK_PATH }}
+      build_time: ${{ steps.record.outputs.build_time }}
+      apk_size: ${{ steps.record.outputs.apk_size }}
+      flutter_version: ${{ steps.flutter_info.outputs.flutter_version }}
 
     steps:
-      # ── 1. Checkout Repository ──────────────────────────────────────────────
-      - name: 1. Checkout Android Application Code
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      # ── 2. Setup Java ──────────────────────────────────────────────────────
-      - name: 2. Setup Java Development Kit (JDK 17)
+      - name: ☕ Setup Java JDK ${{ env.JAVA_VERSION }} (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
 
-      # ── 3. Setup Flutter ───────────────────────────────────────────────────
-      - name: 3. Setup Flutter SDK
+      - name: 🐦 Setup Flutter SDK ${{ env.FLUTTER_VERSION }}
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
           cache: true
+          cache-key: flutter-${{ env.FLUTTER_VERSION }}-${{ runner.os }}-android
 
-      # ── 4. Build Android Debug APK ──────────────────────────────────────────
-      - name: 4. Install Flutter Dependencies & Build Android APK
+      - name: 🔍 Flutter Version Info
+        id: flutter_info
+        run: |
+          flutter --version
+          FLUTTER_VER=$(flutter --version 2>/dev/null | grep 'Flutter' | awk '{print $2}' | head -1)
+          DART_VER=$(flutter --version 2>/dev/null | grep 'Dart' | awk '{print $2}' | head -1)
+          echo "flutter_version=${FLUTTER_VER}" >> $GITHUB_OUTPUT
+          echo "dart_version=${DART_VER}" >> $GITHUB_OUTPUT
+          echo "✅ Flutter: ${FLUTTER_VER} | Dart: ${DART_VER}"
+
+      - name: 📦 Install Flutter Dependencies
         run: |
           flutter pub get
-          flutter build apk --debug --no-tree-shake-icons
+          echo "✅ Dependencies installed"
 
-      # ── 5. Setup Node.js & Appium Server ────────────────────────────────────
-      - name: 5. Setup Node.js Environment
+      - name: 🏗️ Build Android APK (${{ github.event.inputs.build_type || 'debug' }})
+        id: build_apk
+        run: |
+          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
+          echo "Building ${BUILD_TYPE} APK..."
+
+          if [[ "${BUILD_TYPE}" == "profile" ]]; then
+            flutter build apk --profile --no-tree-shake-icons
+          else
+            flutter build apk --debug --no-tree-shake-icons
+          fi
+
+          echo "✅ APK build complete"
+
+      - name: 📊 Record APK Metadata
+        id: record
+        run: |
+          APK_SIZE=$(du -h "${{ env.APK_PATH }}" 2>/dev/null | cut -f1 || echo "N/A")
+          APK_HASH=$(md5sum "${{ env.APK_PATH }}" 2>/dev/null | cut -d' ' -f1 || echo "N/A")
+          BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          echo "apk_size=${APK_SIZE}" >> $GITHUB_OUTPUT
+          echo "build_time=${BUILD_TIME}" >> $GITHUB_OUTPUT
+          echo "📦 APK: ${{ env.APK_PATH }} | Size: ${APK_SIZE} | MD5: ${APK_HASH}"
+
+      - name: 📤 Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lexguard-android-apk-${{ github.sha }}
+          path: ${{ env.APK_PATH }}
+          retention-days: 7
+          if-no-files-found: error
+
+# ── Job 2: Appium E2E Tests on Android Emulator ───────────────────────────────
+  appium-e2e:
+    name: 📱 Appium E2E — Android Emulator (API ${{ github.event.inputs.api_level || '33' }})
+    runs-on: macos-13
+    timeout-minutes: 90
+    needs: build-apk
+    outputs:
+      test_result: ${{ steps.run_tests.outcome }}
+      exit_code: ${{ steps.run_tests.outputs.exit_code }}
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ☕ Setup Java JDK ${{ env.JAVA_VERSION }} (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: 🟢 Setup Node.js ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: 'automation/appium/package-lock.json'
 
-      - name: 6. Install Appium CLI & UiAutomator2 Driver
-        run: |
-          npm install -g appium
-          appium driver install uiautomator2
+      - name: 📥 Download APK Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lexguard-android-apk-${{ github.sha }}
+          path: build/app/outputs/flutter-apk/
 
-      - name: 7. Install Appium Framework Dependencies
+      - name: 🔍 Verify APK
+        run: |
+          APK_FILE="${{ env.APK_PATH }}"
+          if [ -f "${APK_FILE}" ]; then
+            APK_SIZE=$(du -h "${APK_FILE}" | cut -f1)
+            echo "✅ APK verified: ${APK_FILE} (${APK_SIZE})"
+          else
+            echo "❌ APK not found at: ${APK_FILE}"
+            ls -la build/app/outputs/flutter-apk/ || true
+            exit 1
+          fi
+
+      - name: 🤖 Install Appium 2.x + UiAutomator2 Driver
+        run: |
+          echo "Installing Appium CLI..."
+          npm install -g appium@latest
+          echo "Installing UiAutomator2 driver..."
+          appium driver install uiautomator2
+          echo "Verifying Appium installation..."
+          appium --version
+          echo "Installed drivers:"
+          appium driver list --installed
+
+      - name: 📦 Install Appium Framework Dependencies
         working-directory: automation/appium
         run: |
-          npm install
-          mkdir -p reports/excel reports/html reports/json reports/screenshots reports/logs
+          npm ci --prefer-offline || npm install
+          echo "✅ Appium framework dependencies installed"
 
-      # ── 6. Start Android Emulator & Execute Appium ──────────────────────────
-      - name: 8. Start Android Emulator & Execute Appium 400+ Test Suite
+      - name: 📁 Prepare Report Directories
+        run: |
+          mkdir -p automation/appium/reports/excel
+          mkdir -p automation/appium/reports/html
+          mkdir -p automation/appium/reports/json
+          mkdir -p automation/appium/reports/screenshots
+          mkdir -p automation/appium/reports/logs
+          echo "✅ Report directories created"
+
+      - name: 📱 Start Emulator, Install APK & Execute Appium Tests
+        id: run_tests
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 33
-          target: google_apis
-          arch: x86_64
-          profile: Nexus 6
+          api-level: ${{ github.event.inputs.api_level || env.ANDROID_API_LEVEL }}
+          target: ${{ env.ANDROID_TARGET }}
+          arch: ${{ env.ANDROID_ARCH }}
+          profile: ${{ env.ANDROID_PROFILE }}
           disable-animations: true
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          avd-name: LexGuard_Test_Device
           script: |
-            echo "Waiting for ADB device..."
-            adb wait-for-device
-            echo "Checking connected ADB devices..."
-            adb devices
-            echo "Installing debug APK onto emulator..."
-            adb install build/app/outputs/flutter-apk/app-debug.apk || true
-            echo "Starting Appium server in background..."
-            appium --log-level info > automation/appium/reports/logs/appium-server.log 2>&1 &
-            sleep 10
-            echo "Executing Appium test suite..."
-            cd automation/appium
-            npm test || true
+            #!/bin/bash
+            set -e
 
-      # ── 7. Generate Excel, HTML & JSON Reports ─────────────────────────────
-      - name: 9. Generate Enterprise Appium Excel, HTML & JSON Reports
+            echo "════════════════════════════════════════════════"
+            echo "  LexGuard AI — Android Appium E2E Test Runner  "
+            echo "════════════════════════════════════════════════"
+            echo ""
+
+            # ── 1. Wait for ADB device readiness ──────────────────────────
+            echo "🔌 Waiting for ADB device..."
+            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+            echo "✅ Device booted. Connected devices:"
+            adb devices
+
+            # ── 2. Disable system animations ─────────────────────────────
+            echo "🎭 Disabling animations for stable testing..."
+            adb shell settings put global window_animation_scale 0 || true
+            adb shell settings put global transition_animation_scale 0 || true
+            adb shell settings put global animator_duration_scale 0 || true
+
+            # ── 3. Install APK ────────────────────────────────────────────
+            APK_PATH="${{ env.APK_PATH }}"
+            echo "📲 Installing APK: ${APK_PATH}"
+            ADB_INSTALL_RETRIES=3
+            for i in $(seq 1 ${ADB_INSTALL_RETRIES}); do
+              if adb install -r "${APK_PATH}"; then
+                echo "✅ APK installed successfully on attempt ${i}"
+                break
+              fi
+              echo "⚠️ Install attempt ${i} failed, retrying..."
+              sleep 5
+              if [ ${i} -eq ${ADB_INSTALL_RETRIES} ]; then
+                echo "❌ APK install failed after ${ADB_INSTALL_RETRIES} attempts"
+                exit 1
+              fi
+            done
+
+            # Verify APK install
+            PACKAGE_NAME="com.lexguard.lexguard_ai"
+            adb shell pm list packages | grep -q "${PACKAGE_NAME}" && \
+              echo "✅ Package verified: ${PACKAGE_NAME}" || \
+              echo "⚠️ Package not found — tests may fail to launch app"
+
+            # ── 4. Start Appium Server ────────────────────────────────────
+            echo "🚀 Starting Appium 2.x server..."
+            appium --port 4723 \
+                   --log-level info \
+                   --allow-insecure chromedriver_autodownload \
+                   > automation/appium/reports/logs/appium-server.log 2>&1 &
+            APPIUM_PID=$!
+            echo "Appium PID: ${APPIUM_PID}"
+
+            # Wait for Appium readiness
+            echo "⏳ Waiting for Appium server to be ready..."
+            MAX_APPIUM_WAIT=30
+            for i in $(seq 1 ${MAX_APPIUM_WAIT}); do
+              if curl -s http://localhost:4723/status | grep -q '"ready":true'; then
+                echo "✅ Appium server ready at attempt ${i}"
+                break
+              fi
+              sleep 2
+              if [ ${i} -eq ${MAX_APPIUM_WAIT} ]; then
+                echo "❌ Appium server did not become ready in time"
+                cat automation/appium/reports/logs/appium-server.log || true
+                exit 1
+              fi
+            done
+
+            # ── 5. Execute Appium Test Suite ──────────────────────────────
+            SUITE="${{ github.event.inputs.test_suite || 'all' }}"
+            echo "🧪 Executing test suite: ${SUITE}"
+            echo ""
+
+            cd automation/appium
+            set +e
+            if [[ "${SUITE}" == "all" || "${SUITE}" == "" ]]; then
+              npm test
+            else
+              npm run "test:${SUITE}" 2>/dev/null || npm test -- --spec "tests/*${SUITE}*"
+            fi
+            TEST_EXIT_CODE=$?
+            set -e
+
+            echo ""
+            echo "═══════════════════════════════════"
+            echo "  Appium exit code: ${TEST_EXIT_CODE}"
+            echo "═══════════════════════════════════"
+
+            # Save exit code for downstream jobs
+            echo "${TEST_EXIT_CODE}" > /tmp/appium_exit_code
+
+            # ── 6. Cleanup ────────────────────────────────────────────────
+            kill ${APPIUM_PID} 2>/dev/null || true
+            echo "✅ Appium server stopped"
+
+            exit ${TEST_EXIT_CODE}
+
+      - name: 📸 Capture Failure Screenshots
+        if: failure()
+        working-directory: automation/appium
+        run: |
+          echo "⚠️ Tests failed — checking failure screenshots..."
+          SCREENSHOT_COUNT=$(find reports/screenshots -name "*.png" 2>/dev/null | wc -l || echo 0)
+          echo "📸 Found ${SCREENSHOT_COUNT} failure screenshots"
+          ls -la reports/screenshots/ 2>/dev/null || echo "No screenshots found"
+
+      - name: 📊 Generate Enterprise Reports
         if: always()
         working-directory: automation/appium
         run: |
-          npm run report || true
+          echo "📊 Generating Appium Excel, HTML, JSON, and Markdown reports..."
+          node utils/report-generator.js || echo "⚠️ Report generation had errors — continuing"
+          echo "✅ Report generation complete"
 
-      # ── 8. Structure Report Artifacts ───────────────────────────────────────
-      - name: 10. Structure Report Artifacts
+      - name: 📁 Consolidate All Report Artifacts
         if: always()
         run: |
-          mkdir -p reports/excel reports/html reports/json reports/screenshots reports/logs
-          cp -r automation/appium/reports/* reports/ 2>/dev/null || true
+          REPORTS_ROOT="ci-artifacts/android-e2e"
+          mkdir -p "${REPORTS_ROOT}/excel"
+          mkdir -p "${REPORTS_ROOT}/html"
+          mkdir -p "${REPORTS_ROOT}/json"
+          mkdir -p "${REPORTS_ROOT}/screenshots"
+          mkdir -p "${REPORTS_ROOT}/logs"
+          mkdir -p "${REPORTS_ROOT}/apk"
 
-      # ── 9. Upload Artifacts (Retention 30 Days) ─────────────────────────────
-      - name: "11. Upload Appium Automation Report Artifacts"
+          # Copy generated reports
+          cp -r automation/appium/reports/excel/. "${REPORTS_ROOT}/excel/" 2>/dev/null || true
+          cp -r automation/appium/reports/html/. "${REPORTS_ROOT}/html/" 2>/dev/null || true
+          cp -r automation/appium/reports/json/. "${REPORTS_ROOT}/json/" 2>/dev/null || true
+          cp -r automation/appium/reports/screenshots/. "${REPORTS_ROOT}/screenshots/" 2>/dev/null || true
+          cp -r automation/appium/reports/logs/. "${REPORTS_ROOT}/logs/" 2>/dev/null || true
+          cp automation/appium/reports/summary.md "${REPORTS_ROOT}/" 2>/dev/null || true
+
+          # Include the APK itself
+          cp "${{ env.APK_PATH }}" "${REPORTS_ROOT}/apk/app-debug.apk" 2>/dev/null || true
+
+          echo "📦 Artifact manifest:"
+          find "${REPORTS_ROOT}" -type f | sort
+
+      - name: 📤 Upload All Report Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LexGuard-Android-Appium-Automation-Reports
-          path: |
-            reports/
-            automation/appium/reports/
-            build/app/outputs/flutter-apk/app-debug.apk
-          retention-days: 30
+          name: ${{ env.ARTIFACT_NAME }}-${{ github.run_number }}
+          path: ci-artifacts/android-e2e/
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          if-no-files-found: warn
 
-      # ── 10. Publish GitHub Summary ──────────────────────────────────────────
-      - name: 12. Publish GitHub Action Execution Summary
-        if: always()
+# ── Job 3: GitHub Actions Job Summary ─────────────────────────────────────────
+  android-summary:
+    name: 📋 Publish Execution Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [build-apk, appium-e2e]
+    if: always()
+
+    steps:
+      - name: 📥 Download Reports for Summary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-${{ github.run_number }}
+          path: ci-artifacts/android-e2e/
+        continue-on-error: true
+
+      - name: 📊 Publish GitHub Actions Job Summary
         run: |
-          if [ -f "reports/summary.md" ]; then
-            cat reports/summary.md >> $GITHUB_STEP_SUMMARY
+          BUILD_RESULT="${{ needs.build-apk.result }}"
+          TEST_RESULT="${{ needs.appium-e2e.result }}"
+          FLUTTER_VER="${{ needs.build-apk.outputs.flutter_version }}"
+          APK_SIZE="${{ needs.build-apk.outputs.apk_size }}"
+          BUILD_TIME="${{ needs.build-apk.outputs.build_time }}"
+          API_LEVEL="${{ github.event.inputs.api_level || env.ANDROID_API_LEVEL }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          ARTIFACT_NAME="${{ env.ARTIFACT_NAME }}-${{ github.run_number }}"
+
+          # Determine overall status
+          if [[ "${TEST_RESULT}" == "success" ]]; then
+            OVERALL_ICON="✅"
+            OVERALL_LABEL="ALL TESTS PASSED"
+          elif [[ "${TEST_RESULT}" == "failure" ]]; then
+            OVERALL_ICON="❌"
+            OVERALL_LABEL="TESTS FAILED"
           else
-            echo "# 📱 LexGuard AI Android Application – Appium Automation Summary" >> $GITHUB_STEP_SUMMARY
-            echo "- **Automation Engine:** Appium 2.x (UiAutomator2 Driver)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Emulator Target:** Android 13.0 (API Level 33)" >> $GITHUB_STEP_SUMMARY
-            echo "- **Total Executed Tests:** 420" >> $GITHUB_STEP_SUMMARY
-            echo "- **Pass Percentage:** 98.57%" >> $GITHUB_STEP_SUMMARY
-            echo "- **Reports Artifact:** LexGuard-Android-Appium-Automation-Reports (Retained 30 Days)" >> $GITHUB_STEP_SUMMARY
+            OVERALL_ICON="⚠️"
+            OVERALL_LABEL="TESTS SKIPPED / INCOMPLETE"
+          fi
+
+          # Parse execution-results.json if available
+          JSON_FILE="ci-artifacts/android-e2e/json/execution-results.json"
+          if [ -f "${JSON_FILE}" ]; then
+            TOTAL=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('total',0))" 2>/dev/null || echo "N/A")
+            PASSED=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('passed',0))" 2>/dev/null || echo "N/A")
+            FAILED=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('failed',0))" 2>/dev/null || echo "N/A")
+            SKIPPED=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('skipped',0))" 2>/dev/null || echo "0")
+            PASS_PCT=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(str(d.get('summary',{}).get('passPercentage','N/A'))+'%')" 2>/dev/null || echo "N/A")
+            DURATION_MS=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('durationMs',0))" 2>/dev/null || echo "0")
+            DURATION_S=$(python3 -c "print(round(${DURATION_MS:-0}/1000,1))" 2>/dev/null || echo "N/A")
+          else
+            TOTAL="N/A"; PASSED="N/A"; FAILED="N/A"; SKIPPED="0"; PASS_PCT="N/A"; DURATION_S="N/A"
+          fi
+
+          # Write summary
+          cat >> $GITHUB_STEP_SUMMARY << HEADER_EOF
+          # 📱 LexGuard AI — Android Appium E2E Automation Report
+          ## ${OVERALL_ICON} ${OVERALL_LABEL}
+          HEADER_EOF
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Test Execution KPIs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total Tests** | ${TOTAL} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **✅ Passed** | ${PASSED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **❌ Failed** | ${FAILED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **⏭️ Skipped** | ${SKIPPED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pass Percentage** | **${PASS_PCT}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Execution Time** | ${DURATION_S}s |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📱 Device & Build Context" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Emulator API Level** | Android API ${API_LEVEL} (Android 13) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Emulator Target** | \`${{ env.ANDROID_TARGET }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Emulator Arch** | \`${{ env.ANDROID_ARCH }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Emulator Profile** | \`${{ env.ANDROID_PROFILE }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **APK Size** | ${APK_SIZE} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **APK Path** | \`${{ env.APK_PATH }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Time** | ${BUILD_TIME} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Run Number** | #${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏗️ Pipeline Stage Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          [[ "${BUILD_RESULT}" == "success" ]] && echo "| 🔨 Build Android APK | ✅ Success |" >> $GITHUB_STEP_SUMMARY || echo "| 🔨 Build Android APK | ❌ ${BUILD_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          [[ "${TEST_RESULT}" == "success" ]] && echo "| 📱 Appium E2E Tests | ✅ Passed |" >> $GITHUB_STEP_SUMMARY || echo "| 📱 Appium E2E Tests | ❌ ${TEST_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Generated Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Artifact: \`${ARTIFACT_NAME}\` (Retained ${{ env.ARTIFACT_RETENTION_DAYS }} days)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| File | Description |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`excel/Automation_Test_Report.xlsx\` | All executed test cases |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`excel/Passed_Test_Cases.xlsx\` | Passed test cases only |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`excel/Failed_Test_Cases.xlsx\` | Failed test cases only |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`excel/Execution_Summary.xlsx\` | Execution metrics summary |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`html/dashboard.html\` | Executive QA Dashboard |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`html/execution-report.html\` | Detailed execution report |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`json/execution-results.json\` | Machine-readable results |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`screenshots/\` | Failure screenshots |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`logs/appium-server.log\` | Appium server log |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`apk/app-debug.apk\` | Tested APK binary |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔧 Test Environment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tool | Version |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Automation Framework | Appium 2.x |" >> $GITHUB_STEP_SUMMARY
+          echo "| Driver | UiAutomator2 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Runner | WebdriverIO + Mocha |" >> $GITHUB_STEP_SUMMARY
+          echo "| Flutter SDK | \`${FLUTTER_VER:-3.44.8}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Java | \`${{ env.JAVA_VERSION }}\` (Temurin) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | v${{ env.NODE_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runner OS | \`macos-13\` (hardware KVM) |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_[🔗 View Full Workflow Run](${RUN_URL})_" >> $GITHUB_STEP_SUMMARY
+
+      - name: ✅ Final Status Gate
+        run: |
+          BUILD_RESULT="${{ needs.build-apk.result }}"
+          TEST_RESULT="${{ needs.appium-e2e.result }}"
+
+          echo "Build: ${BUILD_RESULT} | Tests: ${TEST_RESULT}"
+
+          if [[ "${TEST_RESULT}" == "failure" ]]; then
+            echo "❌ Appium E2E tests FAILED — marking workflow as failed."
+            exit 1
+          elif [[ "${BUILD_RESULT}" == "failure" ]]; then
+            echo "❌ APK build FAILED — marking workflow as failed."
+            exit 1
+          else
+            echo "✅ All stages passed successfully."
           fi

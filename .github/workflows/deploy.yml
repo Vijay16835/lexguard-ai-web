@@ -1,48 +1,313 @@
-name: Deploy Flutter Web to GitHub Pages
+# ══════════════════════════════════════════════════════════════════════════════
+# LexGuard AI — Flutter Web → GitHub Pages Deployment Pipeline
+# Version: 3.0.0 | Maintainer: LexGuard DevOps Team
+#
+# Stages:
+#   1. build-web   — Flutter Web production build
+#   2. deploy      — Push build/web → gh-pages branch
+#   3. health-check — HTTP probe with retry; fails only on real deployment failure
+#   4. summary     — Rich GitHub Job Summary
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: 🚀 LexGuard AI — Deploy Flutter Web to GitHub Pages
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      run_analysis:
+        description: 'Run flutter analyze before build?'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+# Cancel any in-flight deployment on the same branch
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
+# ── Global Environment ────────────────────────────────────────────────────────
+env:
+  FLUTTER_VERSION: '3.44.8'
+  JAVA_VERSION: '17'
+  BASE_HREF: '/pdd/'
+  APP_URL: 'https://vijay16835.github.io/pdd/'
+  ARTIFACT_RETENTION_DAYS: '30'
+
+# ══════════════════════════════════════════════════════════════════════════════
 jobs:
-  build-and-deploy:
+# ── Job 1: Build Flutter Web ──────────────────────────────────────────────────
+  build-web:
+    name: 🔨 Build Flutter Web
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      build_time: ${{ steps.record.outputs.build_time }}
+      flutter_ver: ${{ steps.flutter_info.outputs.flutter_version }}
+      dart_ver: ${{ steps.flutter_info.outputs.dart_version }}
 
     steps:
-      - name: Checkout Code
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      - name: Set up Java
+      - name: ☕ Setup Java JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Set up Flutter
+      - name: 🐦 Setup Flutter SDK
+        id: flutter_setup
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
           cache: true
+          cache-key: flutter-${{ env.FLUTTER_VERSION }}-${{ runner.os }}
 
-      - name: Install Dependencies
-        run: flutter pub get
+      - name: 📦 Install Flutter Dependencies
+        run: |
+          flutter pub get
+          echo "Dependencies installed successfully."
 
-      - name: Analyze Code
+      - name: 🔍 Flutter Version Info
+        id: flutter_info
+        run: |
+          flutter --version
+          FLUTTER_VER=$(flutter --version 2>/dev/null | grep 'Flutter' | awk '{print $2}' | head -1)
+          DART_VER=$(flutter --version 2>/dev/null | grep 'Dart' | awk '{print $2}' | head -1)
+          echo "flutter_version=${FLUTTER_VER}" >> $GITHUB_OUTPUT
+          echo "dart_version=${DART_VER}" >> $GITHUB_OUTPUT
+          echo "✅ Flutter: ${FLUTTER_VER} | Dart: ${DART_VER}"
+
+      - name: 🧪 Flutter Analyze (Code Quality)
+        if: ${{ github.event.inputs.run_analysis == 'true' || github.event_name == 'push' }}
         run: flutter analyze
         continue-on-error: true
 
-      - name: Build Web
-        run: flutter build web --release --base-href="/pdd/"
+      - name: 🏗️ Build Flutter Web (Release)
+        id: build_step
+        run: |
+          START_TIME=$(date +%s)
+          echo "Building Flutter Web with base-href: ${{ env.BASE_HREF }}"
+          flutter build web --release \
+            --base-href="${{ env.BASE_HREF }}" \
+            --dart-define=FLUTTER_ENV=production \
+            --no-tree-shake-icons
+          END_TIME=$(date +%s)
+          BUILD_DURATION=$((END_TIME - START_TIME))
+          echo "build_duration=${BUILD_DURATION}" >> $GITHUB_OUTPUT
+          echo "✅ Flutter Web build completed in ${BUILD_DURATION}s"
 
-      - name: Prepare 404 Page for Routing
-        run: cp build/web/index.html build/web/404.html
+      - name: 📝 Prepare 404.html for SPA Routing
+        run: |
+          cp build/web/index.html build/web/404.html
+          echo "✅ 404.html created for SPA routing support"
 
-      - name: Deploy to GitHub Pages
+      - name: 📊 Build Artifact Stats
+        id: record
+        run: |
+          BUILD_SIZE=$(du -sh build/web 2>/dev/null | cut -f1 || echo "N/A")
+          FILE_COUNT=$(find build/web -type f | wc -l || echo "0")
+          BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          echo "build_time=${BUILD_TIME}" >> $GITHUB_OUTPUT
+          echo "build_size=${BUILD_SIZE}" >> $GITHUB_OUTPUT
+          echo "file_count=${FILE_COUNT}" >> $GITHUB_OUTPUT
+          echo "📁 Build size: ${BUILD_SIZE} | Files: ${FILE_COUNT}"
+
+      - name: 📤 Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-build-${{ github.sha }}
+          path: build/web/
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          if-no-files-found: error
+
+# ── Job 2: Deploy to GitHub Pages ─────────────────────────────────────────────
+  deploy:
+    name: 🚢 Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-web
+    outputs:
+      deployment_url: ${{ env.APP_URL }}
+      deploy_status: ${{ steps.deploy_action.outcome }}
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-build-${{ github.sha }}
+          path: build/web/
+
+      - name: 🚀 Deploy to GitHub Pages
+        id: deploy_action
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           folder: build/web
           branch: gh-pages
+          clean: true
+          single-commit: true
+          commit-message: |
+            🚀 Deploy LexGuard AI Web
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.actor }}
+            Build: ${{ github.run_number }}
+
+# ── Job 3: Health Check ────────────────────────────────────────────────────────
+  health-check:
+    name: 🏥 Deployment Health Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy
+    outputs:
+      http_status: ${{ steps.probe.outputs.http_status }}
+      response_time_ms: ${{ steps.probe.outputs.response_time_ms }}
+      health_passed: ${{ steps.probe.outputs.health_passed }}
+
+    steps:
+      - name: ⏳ Wait for GitHub Pages CDN Propagation
+        run: |
+          echo "Waiting 30 seconds for CDN propagation..."
+          sleep 30
+
+      - name: 🔍 HTTP Health Probe with Retry
+        id: probe
+        run: |
+          TARGET_URL="${{ env.APP_URL }}"
+          MAX_RETRIES=15
+          WAIT_SECONDS=20
+          HEALTH_PASSED="false"
+          HTTP_STATUS="000"
+          RESPONSE_TIME_MS="0"
+
+          echo "🔍 Probing: ${TARGET_URL}"
+          echo "   Max retries: ${MAX_RETRIES} | Wait per attempt: ${WAIT_SECONDS}s"
+
+          for i in $(seq 1 ${MAX_RETRIES}); do
+            START_MS=$(($(date +%s%3N)))
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --connect-timeout 15 \
+              --max-time 30 \
+              -L "${TARGET_URL}" 2>/dev/null || echo "000")
+            END_MS=$(($(date +%s%3N)))
+            RESPONSE_TIME_MS=$((END_MS - START_MS))
+
+            echo "  Attempt ${i}/${MAX_RETRIES}: HTTP ${HTTP_STATUS} (${RESPONSE_TIME_MS}ms)"
+
+            if [[ "${HTTP_STATUS}" == "200" || "${HTTP_STATUS}" == "301" || "${HTTP_STATUS}" == "302" ]]; then
+              HEALTH_PASSED="true"
+              echo "✅ Deployment verified at attempt ${i}"
+              break
+            fi
+
+            if [ ${i} -lt ${MAX_RETRIES} ]; then
+              echo "  ⏳ Waiting ${WAIT_SECONDS}s before retry..."
+              sleep ${WAIT_SECONDS}
+            fi
+          done
+
+          echo "http_status=${HTTP_STATUS}" >> $GITHUB_OUTPUT
+          echo "response_time_ms=${RESPONSE_TIME_MS}" >> $GITHUB_OUTPUT
+          echo "health_passed=${HEALTH_PASSED}" >> $GITHUB_OUTPUT
+
+          if [ "${HEALTH_PASSED}" != "true" ]; then
+            echo "❌ DEPLOYMENT HEALTH CHECK FAILED after ${MAX_RETRIES} attempts"
+            echo "   Last HTTP Status: ${HTTP_STATUS}"
+            exit 1
+          fi
+
+# ── Job 4: GitHub Actions Summary ─────────────────────────────────────────────
+  deployment-summary:
+    name: 📋 Deployment Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [build-web, deploy, health-check]
+    if: always()
+
+    steps:
+      - name: 📊 Publish GitHub Actions Job Summary
+        run: |
+          DEPLOY_STATUS="${{ needs.deploy.result }}"
+          HEALTH_STATUS="${{ needs.health-check.result }}"
+          HTTP_CODE="${{ needs.health-check.outputs.http_status }}"
+          RESPONSE_MS="${{ needs.health-check.outputs.response_time_ms }}"
+          BUILD_TIME="${{ needs.build-web.outputs.build_time }}"
+          FLUTTER_VER="${{ needs.build-web.outputs.flutter_ver }}"
+          DART_VER="${{ needs.build-web.outputs.dart_ver }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Determine overall status
+          if [[ "${DEPLOY_STATUS}" == "success" && "${HEALTH_STATUS}" == "success" ]]; then
+            OVERALL_ICON="✅"
+            OVERALL_STATUS="DEPLOYMENT SUCCESSFUL"
+          elif [[ "${DEPLOY_STATUS}" == "success" && "${HEALTH_STATUS}" != "success" ]]; then
+            OVERALL_ICON="⚠️"
+            OVERALL_STATUS="DEPLOYED — HEALTH CHECK FAILED"
+          else
+            OVERALL_ICON="❌"
+            OVERALL_STATUS="DEPLOYMENT FAILED"
+          fi
+
+          cat >> $GITHUB_STEP_SUMMARY << 'SUMMARY_EOF'
+          # 🚀 LexGuard AI — GitHub Pages Deployment Report
+          SUMMARY_EOF
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## ${OVERALL_ICON} ${OVERALL_STATUS}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Application URL** | [${{ env.APP_URL }}](${{ env.APP_URL }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered By** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Number** | #${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Build Timestamp** | ${BUILD_TIME} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## 📊 Deployment Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${DEPLOY_STATUS}" == "success" ]]; then
+            echo "| **Build Stage** | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **Build Stage** | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "${HEALTH_STATUS}" == "success" ]]; then
+            echo "| **Deploy Stage** | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Health Check** | ✅ HTTP ${HTTP_CODE} (${RESPONSE_MS}ms) |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| **Deploy Stage** | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+            echo "| **Health Check** | ❌ HTTP ${HTTP_CODE} |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔧 Build Environment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tool | Version |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Flutter SDK | \`${FLUTTER_VER:-3.44.8}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Dart SDK | \`${DART_VER:-3.12.2}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Java | \`${{ env.JAVA_VERSION }}\` (Temurin) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runner OS | \`ubuntu-latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Base Href | \`${{ env.BASE_HREF }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_[View full workflow run](${RUN_URL})_" >> $GITHUB_STEP_SUMMARY

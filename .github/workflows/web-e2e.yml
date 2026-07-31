@@ -1,148 +1,498 @@
-name: LexGuard AI Web – Complete Selenium E2E Automation & CI/CD Pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+# LexGuard AI — Web E2E Selenium Automation Pipeline
+# Version: 3.0.0 | Maintainer: LexGuard QA Automation Team
+#
+# Execution Flow:
+#   build-web → deploy-web → wait-for-deployment → selenium-e2e → report-summary
+#
+# Key Features:
+#   - Build Flutter Web + deploy to GitHub Pages
+#   - HTTP readiness probe with configurable retries
+#   - Headless Chrome + Selenium Webdriver automation
+#   - On-failure screenshot capture
+#   - Full Excel, HTML, JSON, Markdown report generation
+#   - GitHub Job Summary with KPI table
+#   - Artifact upload with 30-day retention (always)
+#   - Workflow fails ONLY when tests actually fail
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: 🌐 LexGuard AI — Web Selenium E2E Automation
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
   workflow_dispatch:
     inputs:
       target_url:
-        description: 'Target Base URL for Web E2E Testing'
+        description: 'Target Base URL for Selenium Tests (leave blank for default)'
         required: false
-        default: 'https://vijay16835.github.io/pdd/'
+        default: ''
+      skip_build:
+        description: 'Skip Flutter build + deploy? (use existing deployment)'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+      test_suite:
+        description: 'Test suite to run (all / auth / documents / ai / history / settings)'
+        required: false
+        default: 'all'
+
+# Cancel stale runs on the same branch
+concurrency:
+  group: web-e2e-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
+# ── Global Environment ─────────────────────────────────────────────────────────
 env:
-  FLUTTER_VERSION: '3.24.x'
-  NODE_VERSION: '18'
+  FLUTTER_VERSION: '3.44.8'
+  JAVA_VERSION: '17'
+  NODE_VERSION: '20'
+  BASE_HREF: '/pdd/'
   DEFAULT_BASE_URL: 'https://vijay16835.github.io/pdd/'
+  CHROME_VERSION: 'stable'
+  ARTIFACT_RETENTION_DAYS: '30'
+  ARTIFACT_NAME: 'LexGuard-Web-Selenium-E2E-Reports'
 
+# ══════════════════════════════════════════════════════════════════════════════
 jobs:
-  build-deploy-and-test:
-    name: 🌐 Build, Deploy to GitHub Pages & Run Selenium E2E Tests
+# ── Job 1: Build Flutter Web ──────────────────────────────────────────────────
+  build-web:
+    name: 🔨 Build Flutter Web
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
+    if: ${{ github.event.inputs.skip_build != 'true' }}
+    outputs:
+      build_status: ${{ job.status }}
+      build_time: ${{ steps.record.outputs.build_time }}
 
     steps:
-      # ── 1. Checkout Repository ──────────────────────────────────────────────
-      - name: 1. Checkout Application Code
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      # ── 2. Setup Java (Required for Flutter tools) ──────────────────────────
-      - name: 2. Setup Java Development Kit (JDK 17)
+      - name: ☕ Setup Java JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
 
-      # ── 3. Setup Flutter ───────────────────────────────────────────────────
-      - name: 3. Setup Flutter SDK
+      - name: 🐦 Setup Flutter SDK ${{ env.FLUTTER_VERSION }}
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
           cache: true
+          cache-key: flutter-${{ env.FLUTTER_VERSION }}-${{ runner.os }}
 
-      # ── 4. Build Flutter Web Application ────────────────────────────────────
-      - name: 4. Install Flutter Dependencies & Build Web
+      - name: 📦 Install Flutter Dependencies
         run: |
           flutter pub get
-          flutter build web --release --base-href="/pdd/"
-          cp build/web/index.html build/web/404.html
+          flutter --version
 
-      # ── 5. Deploy to GitHub Pages ───────────────────────────────────────────
-      - name: 5. Deploy Flutter Web to GitHub Pages
+      - name: 🏗️ Build Flutter Web (Release)
+        run: |
+          flutter build web --release \
+            --base-href="${{ env.BASE_HREF }}" \
+            --dart-define=FLUTTER_ENV=production \
+            --no-tree-shake-icons
+          cp build/web/index.html build/web/404.html
+          echo "✅ Flutter Web build complete"
+
+      - name: 📊 Record Build Metadata
+        id: record
+        run: |
+          BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          BUILD_SIZE=$(du -sh build/web 2>/dev/null | cut -f1 || echo "N/A")
+          echo "build_time=${BUILD_TIME}" >> $GITHUB_OUTPUT
+          echo "Build size: ${BUILD_SIZE} at ${BUILD_TIME}"
+
+      - name: 📤 Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-web-e2e-build-${{ github.sha }}
+          path: build/web/
+          retention-days: 7
+          if-no-files-found: error
+
+# ── Job 2: Deploy to GitHub Pages ─────────────────────────────────────────────
+  deploy-web:
+    name: 🚢 Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: build-web
+    if: ${{ always() && (needs.build-web.result == 'success' || github.event.inputs.skip_build == 'true') }}
+    outputs:
+      deployment_url: ${{ env.DEFAULT_BASE_URL }}
+      deploy_status: ${{ job.status }}
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifact
+        if: ${{ github.event.inputs.skip_build != 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: flutter-web-e2e-build-${{ github.sha }}
+          path: build/web/
+
+      - name: 🚀 Deploy to GitHub Pages
+        id: deploy
+        if: ${{ github.event.inputs.skip_build != 'true' }}
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           folder: build/web
           branch: gh-pages
+          clean: true
+          single-commit: true
+          commit-message: |
+            🌐 Web E2E Deploy — Run #${{ github.run_number }}
+            SHA: ${{ github.sha }}
 
-      # ── 6. Wait for & Verify Deployment ─────────────────────────────────────
-      - name: 6. Verify Web Application Deployment Health
+# ── Job 3: Wait for Deployment Readiness ──────────────────────────────────────
+  wait-for-deployment:
+    name: ⏳ Wait for Deployment Readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: deploy-web
+    outputs:
+      target_url: ${{ steps.resolve_url.outputs.target_url }}
+      http_status: ${{ steps.readiness.outputs.http_status }}
+      ready: ${{ steps.readiness.outputs.ready }}
+
+    steps:
+      - name: 🔗 Resolve Target URL
+        id: resolve_url
         run: |
-          TARGET_URL="${{ inputs.target_url || secrets.BASE_URL || env.DEFAULT_BASE_URL }}"
-          echo "Target Base URL for E2E Tests: $TARGET_URL"
-          echo "Verifying HTTP response..."
-          for i in {1..20}; do
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$TARGET_URL" || echo "000")
-            echo "Attempt $i: HTTP Status $HTTP_STATUS"
-            if [ "$HTTP_STATUS" -eq 200 ] || [ "$HTTP_STATUS" -eq 301 ] || [ "$HTTP_STATUS" -eq 302 ]; then
-              echo "✅ Web application deployed and reachable at $TARGET_URL"
+          TARGET_URL="${{ github.event.inputs.target_url }}"
+          if [ -z "${TARGET_URL}" ]; then
+            TARGET_URL="${{ secrets.BASE_URL }}"
+          fi
+          if [ -z "${TARGET_URL}" ]; then
+            TARGET_URL="${{ env.DEFAULT_BASE_URL }}"
+          fi
+          echo "target_url=${TARGET_URL}" >> $GITHUB_OUTPUT
+          echo "🔗 Target URL resolved: ${TARGET_URL}"
+
+      - name: ⏳ Wait for CDN Propagation
+        run: |
+          echo "Waiting 30 seconds for GitHub Pages CDN propagation..."
+          sleep 30
+
+      - name: 🏥 Deployment Readiness Probe
+        id: readiness
+        run: |
+          TARGET_URL="${{ steps.resolve_url.outputs.target_url }}"
+          MAX_RETRIES=20
+          WAIT_SECONDS=15
+          READY="false"
+          HTTP_STATUS="000"
+
+          echo "🔍 Probing: ${TARGET_URL}"
+          echo "   Strategy: ${MAX_RETRIES} retries × ${WAIT_SECONDS}s = max $((MAX_RETRIES * WAIT_SECONDS))s"
+
+          for i in $(seq 1 ${MAX_RETRIES}); do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --connect-timeout 10 \
+              --max-time 30 \
+              -L "${TARGET_URL}" 2>/dev/null || echo "000")
+
+            echo "  Attempt ${i}/${MAX_RETRIES}: HTTP ${HTTP_STATUS}"
+
+            if [[ "${HTTP_STATUS}" == "200" || "${HTTP_STATUS}" == "301" || "${HTTP_STATUS}" == "302" ]]; then
+              READY="true"
+              echo "✅ Application is ready at attempt ${i} (HTTP ${HTTP_STATUS})"
               break
             fi
-            sleep 5
+
+            if [ ${i} -lt ${MAX_RETRIES} ]; then
+              echo "  ⏳ Waiting ${WAIT_SECONDS}s before retry..."
+              sleep ${WAIT_SECONDS}
+            fi
           done
 
-      # ── 7. Setup Node.js & Chrome ───────────────────────────────────────────
-      - name: 7. Setup Node.js Environment
+          echo "http_status=${HTTP_STATUS}" >> $GITHUB_OUTPUT
+          echo "ready=${READY}" >> $GITHUB_OUTPUT
+
+          if [ "${READY}" != "true" ]; then
+            echo "⚠️ WARNING: Application not confirmed ready after ${MAX_RETRIES} retries."
+            echo "   Proceeding with Selenium tests — tests will capture actual HTTP errors."
+          fi
+
+# ── Job 4: Selenium E2E Tests ─────────────────────────────────────────────────
+  selenium-e2e:
+    name: 🧪 Selenium E2E — Headless Chrome
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: wait-for-deployment
+    outputs:
+      test_result: ${{ steps.run_tests.outcome }}
+      exit_code: ${{ steps.run_tests.outputs.exit_code }}
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: 'automation/selenium/package-lock.json'
 
-      - name: 8. Setup Headless Google Chrome
+      - name: 🌐 Install Google Chrome (Stable)
         uses: browser-actions/setup-chrome@v1
         with:
-          chrome-version: 'stable'
+          chrome-version: ${{ env.CHROME_VERSION }}
+          install-chromedriver: true
 
-      # ── 8. Install Selenium Test Suite ─────────────────────────────────────
-      - name: 9. Install Selenium Test Framework Dependencies
+      - name: 🔍 Verify Chrome + ChromeDriver
+        run: |
+          google-chrome --version || chrome --version || chromium-browser --version || true
+          chromedriver --version || true
+          echo "Chrome binary: $(which google-chrome || which chrome || which chromium-browser || echo 'Not found')"
+
+      - name: 📦 Install Selenium Framework Dependencies
         working-directory: automation/selenium
         run: |
-          npm install
-          mkdir -p reports/excel reports/html reports/json reports/screenshots reports/logs
+          npm ci --prefer-offline || npm install
+          echo "✅ Node modules installed"
 
-      # ── 9. Run Selenium E2E Automation Tests ──────────────────────────────
-      - name: 10. Execute Selenium 400+ E2E Test Suite against Deployed Site
+      - name: 📁 Prepare Report Directories
+        run: |
+          mkdir -p automation/selenium/reports/excel
+          mkdir -p automation/selenium/reports/html
+          mkdir -p automation/selenium/reports/json
+          mkdir -p automation/selenium/reports/screenshots
+          mkdir -p automation/selenium/reports/logs
+          echo "✅ Report directories created"
+
+      - name: 🏃 Execute Selenium E2E Test Suite
+        id: run_tests
         working-directory: automation/selenium
         run: |
-          npm test -- --exit || true
+          TARGET_URL="${{ needs.wait-for-deployment.outputs.target_url }}"
+          SUITE="${{ github.event.inputs.test_suite || 'all' }}"
+          echo "🎯 Target URL: ${TARGET_URL}"
+          echo "📋 Test Suite: ${SUITE}"
+          echo ""
+
+          if [[ "${SUITE}" == "all" || "${SUITE}" == "" ]]; then
+            TEST_CMD="npm test -- --exit"
+          else
+            TEST_CMD="npm test -- --exit --grep '${SUITE}'"
+          fi
+
+          echo "Running: ${TEST_CMD}"
+          set +e
+          eval "${TEST_CMD}"
+          EXIT_CODE=$?
+          set -e
+
+          echo "exit_code=${EXIT_CODE}" >> $GITHUB_OUTPUT
+          echo ""
+          echo "═══════════════════════════════════"
+          echo "  Test suite exit code: ${EXIT_CODE}"
+          echo "═══════════════════════════════════"
+          exit ${EXIT_CODE}
         env:
-          BASE_URL: ${{ inputs.target_url || secrets.BASE_URL || env.DEFAULT_BASE_URL }}
+          BASE_URL: ${{ needs.wait-for-deployment.outputs.target_url }}
           BROWSER: 'chrome'
           HEADLESS: 'true'
           TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL || 'tvijay1098@gmail.com' }}
           TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD || 'CorrectPassword123' }}
+          CI: 'true'
+          NODE_ENV: 'ci'
 
-      # ── 10. Generate HTML, Excel & JSON Reports ─────────────────────────────
-      - name: 11. Generate Enterprise Excel, HTML & JSON Reports
+      - name: 📸 Capture Screenshots on Test Failure
+        if: failure()
+        working-directory: automation/selenium
+        run: |
+          echo "⚠️ Tests failed — checking for failure screenshots..."
+          SCREENSHOT_DIR="reports/screenshots"
+          SCREENSHOT_COUNT=$(find "${SCREENSHOT_DIR}" -name "*.png" 2>/dev/null | wc -l || echo 0)
+          echo "📸 Found ${SCREENSHOT_COUNT} failure screenshots in ${SCREENSHOT_DIR}"
+          ls -la "${SCREENSHOT_DIR}/" 2>/dev/null || echo "No screenshots directory"
+
+      - name: 📊 Generate Enterprise Reports
         if: always()
         working-directory: automation/selenium
         run: |
-          npm run report || true
+          echo "📊 Generating Excel, HTML, JSON, and Markdown reports..."
+          npm run report || echo "⚠️ Report generation encountered errors — continuing"
+          echo "✅ Report generation complete"
 
-      # ── 11. Copy Reports to Top-Level Folder ────────────────────────────────
-      - name: 12. Structure Report Artifacts
+      - name: 📁 Consolidate All Report Artifacts
         if: always()
         run: |
-          mkdir -p reports/excel reports/html reports/json reports/screenshots reports/logs
-          cp -r automation/selenium/reports/* reports/ 2>/dev/null || true
+          REPORTS_ROOT="ci-artifacts/web-e2e"
+          mkdir -p "${REPORTS_ROOT}/excel"
+          mkdir -p "${REPORTS_ROOT}/html"
+          mkdir -p "${REPORTS_ROOT}/json"
+          mkdir -p "${REPORTS_ROOT}/screenshots"
+          mkdir -p "${REPORTS_ROOT}/logs"
 
-      # ── 12. Upload All Generated Reports as GitHub Artifacts ────────────────
-      - name: "13. Upload Automation Report Artifacts"
+          # Copy all generated reports
+          cp -r automation/selenium/reports/excel/*.xlsx "${REPORTS_ROOT}/excel/" 2>/dev/null || true
+          cp -r automation/selenium/reports/html/. "${REPORTS_ROOT}/html/" 2>/dev/null || true
+          cp -r automation/selenium/reports/json/. "${REPORTS_ROOT}/json/" 2>/dev/null || true
+          cp -r automation/selenium/reports/screenshots/. "${REPORTS_ROOT}/screenshots/" 2>/dev/null || true
+          cp -r automation/selenium/reports/logs/. "${REPORTS_ROOT}/logs/" 2>/dev/null || true
+          cp automation/selenium/reports/summary.md "${REPORTS_ROOT}/" 2>/dev/null || true
+
+          echo "📦 Artifact manifest:"
+          find "${REPORTS_ROOT}" -type f | sort
+
+      - name: 📤 Upload All Report Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LexGuard-Web-Selenium-Automation-Reports
-          path: |
-            reports/
-            automation/selenium/reports/
-          retention-days: 30
+          name: ${{ env.ARTIFACT_NAME }}-${{ github.run_number }}
+          path: ci-artifacts/web-e2e/
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          if-no-files-found: warn
 
-      # ── 13. Publish GitHub Actions Summary ──────────────────────────────────
-      - name: 14. Publish GitHub Action Execution Summary
-        if: always()
+# ── Job 5: GitHub Actions Job Summary ─────────────────────────────────────────
+  e2e-summary:
+    name: 📋 Publish Execution Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [build-web, deploy-web, wait-for-deployment, selenium-e2e]
+    if: always()
+
+    steps:
+      - name: 📥 Download Reports for Summary
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-${{ github.run_number }}
+          path: ci-artifacts/web-e2e/
+        continue-on-error: true
+
+      - name: 📊 Publish GitHub Actions Job Summary
         run: |
-          if [ -f "reports/summary.md" ]; then
-            cat reports/summary.md >> $GITHUB_STEP_SUMMARY
+          TARGET_URL="${{ needs.wait-for-deployment.outputs.target_url }}"
+          BUILD_RESULT="${{ needs.build-web.result }}"
+          DEPLOY_RESULT="${{ needs.deploy-web.result }}"
+          TEST_RESULT="${{ needs.selenium-e2e.result }}"
+          HTTP_STATUS="${{ needs.wait-for-deployment.outputs.http_status }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          ARTIFACT_NAME="${{ env.ARTIFACT_NAME }}-${{ github.run_number }}"
+          WORKFLOW_STARTED="${{ github.event.repository.updated_at }}"
+
+          # Determine overall pass/fail
+          if [[ "${TEST_RESULT}" == "success" ]]; then
+            OVERALL_ICON="✅"
+            OVERALL_LABEL="ALL TESTS PASSED"
+          elif [[ "${TEST_RESULT}" == "failure" ]]; then
+            OVERALL_ICON="❌"
+            OVERALL_LABEL="TESTS FAILED"
           else
-            echo "# 🖥️ LexGuard AI Web Application – Selenium Automation Summary" >> $GITHUB_STEP_SUMMARY
-            echo "- **Target URL:** ${{ inputs.target_url || secrets.BASE_URL || env.DEFAULT_BASE_URL }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Total Executed Tests:** 420" >> $GITHUB_STEP_SUMMARY
-            echo "- **Pass Percentage:** 98.81%" >> $GITHUB_STEP_SUMMARY
-            echo "- **Reports Artifact:** LexGuard-Web-Selenium-Automation-Reports (Retained 30 Days)" >> $GITHUB_STEP_SUMMARY
+            OVERALL_ICON="⚠️"
+            OVERALL_LABEL="TESTS SKIPPED / INCOMPLETE"
+          fi
+
+          # Read execution-results.json if available
+          JSON_FILE="ci-artifacts/web-e2e/json/execution-results.json"
+          if [ -f "${JSON_FILE}" ]; then
+            TOTAL=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('total',0))" 2>/dev/null || echo "N/A")
+            PASSED=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('passed',0))" 2>/dev/null || echo "N/A")
+            FAILED=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('failed',0))" 2>/dev/null || echo "N/A")
+            SKIPPED=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('skipped',0))" 2>/dev/null || echo "0")
+            PASS_PCT=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(str(d.get('summary',{}).get('passPercentage','N/A'))+'%')" 2>/dev/null || echo "N/A")
+            DURATION_MS=$(python3 -c "import json; d=json.load(open('${JSON_FILE}')); print(d.get('summary',{}).get('durationMs',0))" 2>/dev/null || echo "0")
+            DURATION_S=$(python3 -c "print(round(${DURATION_MS:-0}/1000,1))" 2>/dev/null || echo "N/A")
+          else
+            TOTAL="N/A"; PASSED="N/A"; FAILED="N/A"; SKIPPED="0"; PASS_PCT="N/A"; DURATION_S="N/A"
+          fi
+
+          # Write summary
+          cat >> $GITHUB_STEP_SUMMARY << HEADER_EOF
+          # 🌐 LexGuard AI — Web Selenium E2E Automation Report
+          ## ${OVERALL_ICON} ${OVERALL_LABEL}
+          HEADER_EOF
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Test Execution KPIs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total Tests** | ${TOTAL} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **✅ Passed** | ${PASSED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **❌ Failed** | ${FAILED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **⏭️ Skipped** | ${SKIPPED} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pass Percentage** | **${PASS_PCT}** |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Execution Time** | ${DURATION_S}s |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Deployment & Execution Context" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Application URL** | [${TARGET_URL:-$DEFAULT_BASE_URL}](${TARGET_URL:-$DEFAULT_BASE_URL}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **HTTP Status at Test Start** | \`${HTTP_STATUS}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Run Number** | #${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered By** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🏗️ Pipeline Stage Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          [[ "${BUILD_RESULT}" == "success" ]] && echo "| 🔨 Build Flutter Web | ✅ Success |" >> $GITHUB_STEP_SUMMARY || echo "| 🔨 Build Flutter Web | ❌ ${BUILD_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          [[ "${DEPLOY_RESULT}" == "success" ]] && echo "| 🚢 Deploy to GitHub Pages | ✅ Success |" >> $GITHUB_STEP_SUMMARY || echo "| 🚢 Deploy to GitHub Pages | ❌ ${DEPLOY_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          [[ "${TEST_RESULT}" == "success" ]] && echo "| 🧪 Selenium E2E Tests | ✅ Passed |" >> $GITHUB_STEP_SUMMARY || echo "| 🧪 Selenium E2E Tests | ❌ ${TEST_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Generated Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Artifact: \`${ARTIFACT_NAME}\` (Retained ${ARTIFACT_RETENTION_DAYS} days)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| File | Description |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`excel/Automation_Test_Report.xlsx\` | All executed test cases |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`excel/Passed_Test_Cases.xlsx\` | Passed test cases only |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`excel/Failed_Test_Cases.xlsx\` | Failed test cases only |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`excel/Execution_Summary.xlsx\` | Execution metrics summary |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`html/dashboard.html\` | Executive QA Dashboard |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`html/execution-report.html\` | Detailed execution report |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`json/execution-results.json\` | Machine-readable results |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`screenshots/\` | Failure screenshots |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`logs/\` | Automation execution logs |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔧 Test Environment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Tool | Version |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Automation Framework | Selenium WebDriver |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Runner | Mocha |" >> $GITHUB_STEP_SUMMARY
+          echo "| Reporter | Mochawesome |" >> $GITHUB_STEP_SUMMARY
+          echo "| Browser | Chrome ${{ env.CHROME_VERSION }} (Headless) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Node.js | v${{ env.NODE_VERSION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runner OS | \`ubuntu-latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "_[🔗 View Full Workflow Run](${RUN_URL})_" >> $GITHUB_STEP_SUMMARY
+
+      - name: ✅ Final Status Gate
+        run: |
+          TEST_RESULT="${{ needs.selenium-e2e.result }}"
+          BUILD_RESULT="${{ needs.build-web.result }}"
+          DEPLOY_RESULT="${{ needs.deploy-web.result }}"
+
+          echo "Build: ${BUILD_RESULT} | Deploy: ${DEPLOY_RESULT} | Tests: ${TEST_RESULT}"
+
+          if [[ "${TEST_RESULT}" == "failure" ]]; then
+            echo "❌ Selenium E2E tests FAILED — marking workflow as failed."
+            exit 1
+          elif [[ "${BUILD_RESULT}" == "failure" || "${DEPLOY_RESULT}" == "failure" ]]; then
+            echo "❌ Pipeline infrastructure FAILED — marking workflow as failed."
+            exit 1
+          else
+            echo "✅ All stages passed successfully."
           fi
