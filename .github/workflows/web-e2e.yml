@@ -55,7 +55,8 @@ env:
   NODE_VERSION: '20'
   BASE_HREF: '/pdd/'
   DEFAULT_BASE_URL: 'https://vijay16835.github.io/pdd/'
-  CHROME_VERSION: 'stable'
+  # Chrome: system google-chrome-stable from apt (ubuntu-latest pre-installed)
+  # ChromeDriver: resolved automatically by Selenium Manager — no version pinning
   ARTIFACT_RETENTION_DAYS: '30'
   ARTIFACT_NAME: 'LexGuard-Web-Selenium-E2E-Reports'
 
@@ -247,17 +248,42 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'automation/selenium/package-lock.json'
 
-      - name: 🌐 Install Google Chrome (Stable)
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: ${{ env.CHROME_VERSION }}
-          install-chromedriver: true
-
-      - name: 🔍 Verify Chrome + ChromeDriver
+      # ── Chrome Installation ────────────────────────────────────────────────
+      # Strategy: Use the system google-chrome-stable from apt on ubuntu-latest.
+      # DO NOT use browser-actions/setup-chrome with install-chromedriver: true —
+      # that action installs a bundled ChromeDriver that may not match the Chrome
+      # version, causing SessionNotCreatedError.
+      # ChromeDriver is resolved automatically by Selenium Manager (built into
+      # selenium-webdriver@4.15+) which downloads the exact matching version.
+      - name: 🌐 Install Google Chrome Stable
         run: |
-          google-chrome --version || chrome --version || chromium-browser --version || true
-          chromedriver --version || true
-          echo "Chrome binary: $(which google-chrome || which chrome || which chromium-browser || echo 'Not found')"
+          echo "Installing google-chrome-stable from apt..."
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update -qq
+          sudo apt-get install -y google-chrome-stable
+          echo "✅ Chrome installed: $(google-chrome --version)"
+
+      - name: 🔍 Print Environment Versions
+        id: verify_chrome
+        run: |
+          echo "══════════════════════════════════════════════"
+          echo "  Environment Version Report"
+          echo "══════════════════════════════════════════════"
+          CHROME_VERSION_FULL=$(google-chrome --version)
+          echo "  google-chrome : ${CHROME_VERSION_FULL}"
+          echo "  node          : $(node -v)"
+          echo "  npm           : $(npm -v)"
+          echo "══════════════════════════════════════════════"
+          echo ""
+          # ChromeDriver is managed by Selenium Manager — no system chromedriver needed
+          echo "  ChromeDriver  : Managed by Selenium Manager (auto-match)"
+          echo ""
+          # Export Chrome binary path for Selenium (DriverFactory reads CHROME_BIN)
+          CHROME_BIN=$(which google-chrome)
+          echo "CHROME_BIN=${CHROME_BIN}" >> $GITHUB_ENV
+          echo "chrome_version=${CHROME_VERSION_FULL}" >> $GITHUB_OUTPUT
+          echo "✅ Chrome binary: ${CHROME_BIN}"
 
       - name: 📦 Install Selenium Framework Dependencies
         working-directory: automation/selenium
@@ -472,7 +498,7 @@ jobs:
           echo "| Automation Framework | Selenium WebDriver |" >> $GITHUB_STEP_SUMMARY
           echo "| Test Runner | Mocha |" >> $GITHUB_STEP_SUMMARY
           echo "| Reporter | Mochawesome |" >> $GITHUB_STEP_SUMMARY
-          echo "| Browser | Chrome ${{ env.CHROME_VERSION }} (Headless) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Browser | google-chrome-stable (Headless) |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | v${{ env.NODE_VERSION }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Runner OS | \`ubuntu-latest\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
