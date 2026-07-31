@@ -306,8 +306,8 @@ jobs:
           BASE_URL: ${{ needs.wait-for-deployment.outputs.target_url }}
           BROWSER: 'chrome'
           HEADLESS: 'true'
-          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL || 'tvijay1098@gmail.com' }}
-          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD || 'CorrectPassword123' }}
+          TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+          TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
           CI: 'true'
           NODE_ENV: 'ci'
 

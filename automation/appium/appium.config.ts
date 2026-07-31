@@ -39,16 +39,11 @@ export const config: WebdriverIO.Config = {
   waitforTimeout: 20000,
   connectionRetryTimeout: 120000,
   connectionRetryCount: 3,
-  services: [
-    ['appium', {
-      args: {
-        address: '127.0.0.1',
-        port: 4723,
-        relaxedSecurity: true
-      },
-      logPath: logsDir
-    }]
-  ],
+  // NOTE: Appium server is managed externally by the CI workflow (android-e2e.yml).
+  // The workflow starts Appium on port 4723, probes /status for readiness,
+  // and stops it after test execution. Do NOT add @wdio/appium-service here
+  // as it would cause a port 4723 conflict.
+  services: [],
   framework: 'mocha',
   reporters: [
     'spec',
