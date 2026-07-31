@@ -166,6 +166,24 @@ jobs:
             Triggered by: ${{ github.actor }}
             Build: ${{ github.run_number }}
 
+      - name: 🔍 Post-Deployment Artifact Verification
+        run: |
+          echo "══════════════════════════════════════════════"
+          echo "  Post-Deployment Artifact Diagnostics"
+          echo "══════════════════════════════════════════════"
+          echo "Checking build/web directory contents:"
+          ls -la build/web/
+          if [ -f "build/web/index.html" ]; then
+            echo "✅ index.html verified in build/web/"
+          else
+            echo "❌ CRITICAL: index.html missing from build/web/"
+            exit 1
+          fi
+          if [ -f "build/web/404.html" ]; then
+            echo "✅ 404.html verified in build/web/"
+          fi
+          echo "Total files deployed: $(find build/web -type f | wc -l)"
+
 # ── Job 3: Health Check ────────────────────────────────────────────────────────
   health-check:
     name: 🏥 Deployment Health Check
@@ -180,14 +198,14 @@ jobs:
     steps:
       - name: ⏳ Wait for GitHub Pages CDN Propagation
         run: |
-          echo "Waiting 30 seconds for CDN propagation..."
-          sleep 30
+          echo "Waiting 45 seconds for CDN propagation..."
+          sleep 45
 
       - name: 🔍 HTTP Health Probe with Retry
         id: probe
         run: |
           TARGET_URL="${{ env.APP_URL }}"
-          MAX_RETRIES=15
+          MAX_RETRIES=20
           WAIT_SECONDS=20
           HEALTH_PASSED="false"
           HTTP_STATUS="000"
@@ -226,6 +244,7 @@ jobs:
           if [ "${HEALTH_PASSED}" != "true" ]; then
             echo "❌ DEPLOYMENT HEALTH CHECK FAILED after ${MAX_RETRIES} attempts"
             echo "   Last HTTP Status: ${HTTP_STATUS}"
+            echo "   Note: Ensure GitHub Pages build source is set to 'gh-pages' branch (root) in Repository Settings -> Pages."
             exit 1
           fi
 
