@@ -58,7 +58,7 @@ export const config: WebdriverIO.Config = {
     timeout: 90000
   },
 
-  afterTest: async function (test, context, { error, result, duration, passed, retry }) {
+  afterTest: async function (test, context, { error, result, duration, passed }: any) {
     if (!passed) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = `${test.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_${timestamp}.png`;

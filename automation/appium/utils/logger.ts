@@ -12,7 +12,7 @@ export const logger = winston.createLogger({
     winston.format.printf(({ timestamp, level, message }) => `[${timestamp}] [${level.toUpperCase()}]: ${message}`)
   ),
   transports: [
-    new winston.transports.File({ filename: path.join(logDir, 'automation.log'), flags: 'a' }),
+    new winston.transports.File({ filename: path.join(logDir, 'automation.log'), options: { flags: 'a' } }),
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
