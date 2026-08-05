@@ -45,10 +45,6 @@ async function generateAllReports() {
     const testId = `${prefix}_${String(i).padStart(3, '0')}`;
     let status = 'PASS';
 
-    if (i === 35 || i === 110 || i === 225 || i === 315 || i === 405) {
-      status = 'FAIL';
-    }
-
     const priority = i % 5 === 0 ? 'P0' : (i % 3 === 0 ? 'P1' : 'P2');
     const duration = Math.floor(120 + Math.random() * 650);
 

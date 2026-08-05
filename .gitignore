@@ -10,6 +10,7 @@ automation/appium/reports/
 automation/reports/
 Artifacts/
 artifacts/
+github_artifacts/
 Test Results/
 ExecutionResults/
 security-audit-reports/

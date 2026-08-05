@@ -242,7 +242,7 @@ jobs:
 
             # ── 1. Wait for ADB device readiness ──────────────────────────
             echo "🔌 Waiting for ADB device..."
-            adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed) ]]; do sleep 1; done'
+            adb wait-for-device
             echo "✅ Device booted. Connected devices:"
             adb devices
 
