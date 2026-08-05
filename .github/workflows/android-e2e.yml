@@ -243,6 +243,10 @@ jobs:
             # ── 1. Wait for ADB device readiness ──────────────────────────
             echo "🔌 Waiting for ADB device..."
             adb wait-for-device
+            until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
+              echo "  Waiting for Android boot completion..."
+              sleep 2
+            done
             echo "✅ Device booted. Connected devices:"
             adb devices
 

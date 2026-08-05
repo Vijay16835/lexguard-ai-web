@@ -66,6 +66,55 @@ async function generateAllReports() {
     else failedCases.push(record);
   }
 
+  // Parse actual Mochawesome test runner results if available
+  const mochawesomePath = path.join(htmlDir, 'Mochawesome.json');
+  if (fs.existsSync(mochawesomePath)) {
+    try {
+      const mochData = fs.readJsonSync(mochawesomePath);
+      if (mochData && mochData.results) {
+        const extractedTests = [];
+        const extractFromSuite = (suite) => {
+          if (suite.tests && suite.tests.length > 0) {
+            suite.tests.forEach((t) => {
+              const tcMatch = t.title.match(/^(TC_[A-Z0-9_]+)/);
+              const testId = tcMatch ? tcMatch[1] : `TC_${extractedTests.length + 1}`;
+              const isPass = t.state === 'passed' || (!t.fail && !t.state && !t.err);
+              const status = isPass ? 'PASS' : 'FAIL';
+              extractedTests.push({
+                testId,
+                module: suite.title || 'Web E2E Suite',
+                testName: t.title,
+                status,
+                executionTime: `${t.duration || 0}ms`,
+                failureReason: status === 'FAIL' ? (t.err?.message || 'Assertion Error') : 'N/A',
+                screenshotPath: status === 'FAIL' ? `screenshots/failure_${testId}.png` : 'N/A',
+                suggestedFix: status === 'FAIL' ? 'Investigate assertion or wait element timeout' : 'N/A',
+                date: dateStr,
+                priority: 'P1'
+              });
+            });
+          }
+          if (suite.suites && suite.suites.length > 0) {
+            suite.suites.forEach(extractFromSuite);
+          }
+        };
+        mochData.results.forEach(extractFromSuite);
+        if (extractedTests.length > 0) {
+          testCases.length = 0;
+          passedCases.length = 0;
+          failedCases.length = 0;
+          extractedTests.forEach((tc) => {
+            testCases.push(tc);
+            if (tc.status === 'PASS') passedCases.push(tc);
+            else failedCases.push(tc);
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn(`Could not parse Mochawesome.json: ${err.message}`);
+    }
+  }
+
   const total = testCases.length;
   const passed = passedCases.length;
   const failed = failedCases.length;
