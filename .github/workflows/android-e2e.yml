@@ -220,6 +220,25 @@ jobs:
           mkdir -p automation/appium/reports/logs
           echo "✅ Report directories created"
 
+      - name: ⚡ Enable KVM Hardware Acceleration & Check Runner Environment
+        run: |
+          echo "Checking KVM status..."
+          ls -la /dev/kvm || true
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+            echo "✅ KVM permissions granted to /dev/kvm"
+          else
+            echo "⚠️ /dev/kvm not found"
+          fi
+          echo "=== Runner KVM & CPU Diagnostics ==="
+          uname -a
+          whoami
+          id
+          test -r /dev/kvm && echo "/dev/kvm readable: YES" || echo "/dev/kvm readable: NO"
+          test -w /dev/kvm && echo "/dev/kvm writable: YES" || echo "/dev/kvm writable: NO"
+          lscpu | grep -i virtualization || true
+          egrep -c '(vmx|svm)' /proc/cpuinfo || true
+
       - name: 📱 Start Emulator, Install APK & Execute Appium Tests
         id: run_tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -229,7 +248,7 @@ jobs:
           arch: ${{ env.ANDROID_ARCH }}
           profile: ${{ env.ANDROID_PROFILE }}
           disable-animations: true
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-snapshot-save -no-window -noaudio -no-boot-anim -camera-back none
           avd-name: LexGuard_Test_Device
           script: bash automation/appium/scripts/run-android-e2e.sh
 
