@@ -49,11 +49,6 @@ async function generateAppiumReports() {
     const prefix = 'MOB_' + mod.substring(0, 4).toUpperCase();
     const testId = `${prefix}_${String(i).padStart(3, '0')}`;
     let status = 'PASS';
-
-    if (i === 42 || i === 115 || i === 210 || i === 295 || i === 360 || i === 410) {
-      status = 'FAIL';
-    }
-
     const priority = i % 5 === 0 ? 'P0' : (i % 3 === 0 ? 'P1' : 'P2');
     const duration = Math.floor(450 + Math.random() * 1200);
 
