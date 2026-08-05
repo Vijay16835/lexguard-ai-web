@@ -152,7 +152,7 @@ jobs:
 # ── Job 2: Appium E2E Tests on Android Emulator ───────────────────────────────
   appium-e2e:
     name: 📱 Appium E2E — Android Emulator (API ${{ github.event.inputs.api_level || '33' }})
-    runs-on: macos-13
+    runs-on: ubuntu-latest
     timeout-minutes: 90
     needs: build-apk
     outputs:
@@ -503,7 +503,7 @@ jobs:
           echo "| Flutter SDK | \`${FLUTTER_VER:-3.44.8}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Java | \`${{ env.JAVA_VERSION }}\` (Temurin) |" >> $GITHUB_STEP_SUMMARY
           echo "| Node.js | v${{ env.NODE_VERSION }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Runner OS | \`macos-13\` (hardware KVM) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Runner OS | \`ubuntu-latest\` (hardware KVM) |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "---" >> $GITHUB_STEP_SUMMARY
           echo "_[🔗 View Full Workflow Run](${RUN_URL})_" >> $GITHUB_STEP_SUMMARY
