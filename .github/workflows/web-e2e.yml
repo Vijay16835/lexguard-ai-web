@@ -412,18 +412,6 @@ jobs:
           ARTIFACT_NAME="${{ env.ARTIFACT_NAME }}-${{ github.run_number }}"
           WORKFLOW_STARTED="${{ github.event.repository.updated_at }}"
 
-          # Determine overall pass/fail
-          if [[ "${TEST_RESULT}" == "success" ]]; then
-            OVERALL_ICON="✅"
-            OVERALL_LABEL="ALL TESTS PASSED"
-          elif [[ "${TEST_RESULT}" == "failure" ]]; then
-            OVERALL_ICON="❌"
-            OVERALL_LABEL="TESTS FAILED"
-          else
-            OVERALL_ICON="⚠️"
-            OVERALL_LABEL="TESTS SKIPPED / INCOMPLETE"
-          fi
-
           # Read execution-results.json if available
           JSON_FILE="ci-artifacts/web-e2e/json/execution-results.json"
           if [ -f "${JSON_FILE}" ]; then
@@ -436,6 +424,21 @@ jobs:
             DURATION_S=$(python3 -c "print(round(${DURATION_MS:-0}/1000,1))" 2>/dev/null || echo "N/A")
           else
             TOTAL="N/A"; PASSED="N/A"; FAILED="N/A"; SKIPPED="0"; PASS_PCT="N/A"; DURATION_S="N/A"
+          fi
+
+          # Determine overall pass/fail accurately from failed test count & job status
+          if [[ "${TEST_RESULT}" == "success" && ("${FAILED}" == "0" || "${FAILED}" == "N/A") ]]; then
+            OVERALL_ICON="✅"
+            OVERALL_LABEL="ALL TESTS PASSED"
+          elif [[ "${FAILED}" != "0" && "${FAILED}" != "N/A" ]]; then
+            OVERALL_ICON="⚠️"
+            OVERALL_LABEL="TESTS COMPLETED WITH FAILURES"
+          elif [[ "${TEST_RESULT}" == "failure" ]]; then
+            OVERALL_ICON="❌"
+            OVERALL_LABEL="TESTS FAILED"
+          else
+            OVERALL_ICON="⚠️"
+            OVERALL_LABEL="TESTS SKIPPED / INCOMPLETE"
           fi
 
           # Write summary
