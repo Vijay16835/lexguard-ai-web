@@ -66,7 +66,7 @@ adb shell pm list packages | grep -q "${PACKAGE_NAME}" && \
 echo "🚀 Starting Appium 2.x server..."
 appium --port 4723 \
        --log-level info \
-       --allow-insecure chromedriver_autodownload \
+       --allow-insecure *:chromedriver_autodownload \
        > automation/appium/reports/logs/appium-server.log 2>&1 &
 APPIUM_PID=$!
 echo "Appium PID: ${APPIUM_PID}"
