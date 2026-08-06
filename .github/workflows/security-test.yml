@@ -49,8 +49,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: 📁 Prepare Security Testing Output Directories
+      - name: 📁 Clean & Prepare Security Testing Output Directories
         run: |
+          rm -rf automation/security-testing/reports
           mkdir -p automation/security-testing/reports/raw
           mkdir -p automation/security-testing/reports/final
 
