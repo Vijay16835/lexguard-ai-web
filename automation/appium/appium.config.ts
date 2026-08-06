@@ -63,6 +63,33 @@ export const config: WebdriverIO.Config = {
   },
 
   afterTest: async function (test, context, { error, result, duration, passed }: any) {
+    try {
+      const rawJsonPath = path.join(reportsDir, 'json', 'wdio-raw-results.json');
+      let records: any[] = [];
+      if (fs.existsSync(rawJsonPath)) {
+        try {
+          records = fs.readJsonSync(rawJsonPath);
+        } catch (_) {
+          records = [];
+        }
+      }
+      const tcMatch = test.title ? test.title.match(/^(TC_[A-Z0-9_]+|MOB_[A-Z0-9_]+)/) : null;
+      const testId = tcMatch ? tcMatch[1] : (test.title ? test.title.split(':')[0] : `TC_MOB_${records.length + 1}`);
+      const status = passed ? 'PASS' : (error ? 'FAIL' : 'SKIPPED');
+      records.push({
+        testId,
+        testName: test.title,
+        suite: test.parent || 'Appium Mobile E2E Suite',
+        status,
+        duration: duration || 0,
+        failureReason: error ? (error.message || String(error)) : 'N/A',
+        timestamp: new Date().toISOString()
+      });
+      fs.outputJsonSync(rawJsonPath, records, { spaces: 2 });
+    } catch (e) {
+      console.warn(`Failed to record raw test result: ${e}`);
+    }
+
     if (!passed) {
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = `${test.title.replace(/[^a-zA-Z0-9_-]/g, '_')}_${timestamp}.png`;

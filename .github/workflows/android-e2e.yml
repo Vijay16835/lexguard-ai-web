@@ -213,6 +213,7 @@ jobs:
 
       - name: 📁 Prepare Report Directories
         run: |
+          mkdir -p automation/appium/reports/final
           mkdir -p automation/appium/reports/excel
           mkdir -p automation/appium/reports/html
           mkdir -p automation/appium/reports/json
@@ -294,7 +295,38 @@ jobs:
           echo "📦 Artifact manifest:"
           find "${REPORTS_ROOT}" -type f | sort
 
-      - name: 📤 Upload All Report Artifacts
+      - name: 🔍 Verify Final Excel Report Artifact
+        if: always()
+        run: |
+          EXCEL_PATH="automation/appium/reports/final/LexGuard_Android_Appium_E2E_Report.xlsx"
+          echo "🔍 Checking Excel report at path: ${EXCEL_PATH}"
+          if [ ! -f "${EXCEL_PATH}" ]; then
+            echo "❌ ERROR: Excel report file does not exist at: ${EXCEL_PATH}"
+            exit 1
+          fi
+          FILE_SIZE=$(wc -c < "${EXCEL_PATH}" | tr -d ' ')
+          if [ "${FILE_SIZE}" -le 0 ]; then
+            echo "❌ ERROR: Excel report file size is 0 bytes"
+            exit 1
+          fi
+          FILE_NAME=$(basename "${EXCEL_PATH}")
+          echo "=========================================="
+          echo "✅ Final Excel Report Verification Passed!"
+          echo "   Exact Path: ${EXCEL_PATH}"
+          echo "   Filename: ${FILE_NAME}"
+          echo "   File Size: ${FILE_SIZE} bytes"
+          echo "=========================================="
+
+      - name: 📤 Upload Final Excel Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LexGuard-Android-Appium-E2E-Excel-Report
+          path: automation/appium/reports/final/LexGuard_Android_Appium_E2E_Report.xlsx
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+          if-no-files-found: error
+
+      - name: 📤 Upload All Debugging Report Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
