@@ -1,0 +1,14 @@
+{
+  "name": "lexguard-ai-security-testing",
+  "version": "1.0.0",
+  "description": "Vulnerability and Security Testing Framework for LexGuard AI",
+  "main": "security-check.js",
+  "scripts": {
+    "test:security": "node security-check.js",
+    "report": "node utils/report-generator.js"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "fs-extra": "^11.2.0"
+  }
+}
