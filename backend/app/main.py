@@ -34,6 +34,38 @@ async def startup_event():
     if not email_ok:
         logger.warning("[Startup] Email/SMTP configuration check failed! OTP features might be unavailable.")
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+
+        # 1. Strict-Transport-Security (HSTS)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # 2. Content-Security-Policy (CSP)
+        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; object-src 'none'"
+
+        # 3. X-Frame-Options
+        response.headers["X-Frame-Options"] = "DENY"
+
+        # 4. X-Content-Type-Options
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # 5. Referrer-Policy
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # 6. Cache-Control
+        if "Cache-Control" not in response.headers:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+
+        return response
+
+# Set all Security Headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 # Set all CORS enabled origins
 app.add_middleware(
     CORSMiddleware,

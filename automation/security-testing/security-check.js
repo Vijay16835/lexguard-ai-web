@@ -5,7 +5,7 @@ const fs = require('fs-extra');
 const { execSync } = require('child_process');
 
 const TARGET_URL = process.env.LEXGUARD_API_URL || process.env.TARGET_URL || 'https://pdd-uw63.onrender.com';
-const CLEAN_URL = TARGET_URL.replace(/\/+$/, '');
+const CLEAN_URL = TARGET_URL.trim().replace(/\/+$/, '');
 
 const rawDir = path.resolve(__dirname, 'reports/raw');
 fs.ensureDirSync(rawDir);
@@ -226,7 +226,7 @@ async function runAllSecurityChecks() {
   }
 
   // Test 2: Invalid JWT Token
-  const invalidJwt = await httpRequest('GET', '/api/v1/documents', {
+  const invalidJwt = await httpRequest('GET', '/api/v1/documents/history', {
     'Authorization': 'Bearer invalid.jwt.token'
   });
   const passInvalidJwt = invalidJwt.statusCode === 401;
@@ -235,7 +235,7 @@ async function runAllSecurityChecks() {
     checkId: `CHK_AUTH_${String(checkCounter++).padStart(3, '0')}`,
     securityArea: 'Identification & Authentication',
     test: 'Reject Malformed Bearer Token',
-    target: `${CLEAN_URL}/api/v1/documents`,
+    target: `${CLEAN_URL}/api/v1/documents/history`,
     expectedResult: 'HTTP 401 Unauthorized',
     actualResult: `HTTP ${invalidJwt.statusCode}`,
     status: passInvalidJwt ? 'PASS' : 'FAIL',
