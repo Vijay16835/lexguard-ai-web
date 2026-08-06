@@ -1,0 +1,13 @@
+{
+  "name": "lexguard-ai-load-testing",
+  "version": "1.0.0",
+  "description": "Load Testing Infrastructure for LexGuard AI Backend API",
+  "main": "load-test.js",
+  "scripts": {
+    "report": "node utils/report-generator.js"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "fs-extra": "^11.2.0"
+  }
+}
