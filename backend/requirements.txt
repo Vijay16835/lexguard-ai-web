@@ -22,3 +22,6 @@ supabase
 psycopg2-binary
 legacy-doc
 pypdfium2
+easyocr
+opencv-python-headless
+

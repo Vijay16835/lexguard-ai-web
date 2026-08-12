@@ -3,8 +3,10 @@ import sys
 import time
 import logging
 import concurrent.futures
+import io
 from typing import Optional, Tuple
-from PIL import Image, ImageOps, ImageFilter
+from PIL import Image, ImageOps, ImageFilter, ImageEnhance
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -14,12 +16,14 @@ class TextExtractionError(Exception):
 
 class OCRService:
     """
-    High-performance, production-ready OCR Service for LexGuard AI.
+    High-performance, production-ready image OCR Service for LexGuard AI.
     Features:
     - Pre-initialized singleton EasyOCR & Tesseract engines.
-    - Pillow EXIF auto-rotation, color mode normalization, max-dimension downscaling.
-    - Primary OCR (Tesseract) with fallback OCR (EasyOCR).
-    - Hard timeout protection and resource cleanup.
+    - Image preprocessing: EXIF transpose, RGB normalization, max 1500px downscaling,
+      grayscale conversion, noise removal, contrast enhancement, adaptive thresholding.
+    - Compression before OCR execution.
+    - Automatic OCR fallback: Primary EasyOCR -> if confidence < 0.40 or timeout -> PyTesseract fallback.
+    - Result merging (deduplicated line integration).
     - Structured [OCR] and [PERF] timing logs.
     """
     def __init__(self):
@@ -65,13 +69,18 @@ class OCRService:
         except Exception as e:
             raise TextExtractionError(f"Invalid image format: {e}") from e
 
-    def preprocess_image(self, file_path: str) -> Tuple[Image.Image, float]:
+    def preprocess_image(self, file_path: str) -> Tuple[Image.Image, bytes, float]:
         """
         Preprocess image for maximum OCR accuracy and high execution speed.
-        - Fix EXIF orientation.
-        - Convert transparency / palette to RGB.
-        - Resize oversized images to max dimension 2400px (preserves quality while boosting OCR speed).
-        - Convert to grayscale, apply autocontrast and subtle sharpening.
+        1. EXIF orientation correction
+        2. RGB conversion (flatten transparency / palette to RGB on white background)
+        3. Resize large images to maximum 1500 px
+        4. Grayscale conversion
+        5. Remove noise
+        6. Increase contrast
+        7. Adaptive thresholding
+        8. Image compression before OCR
+        Returns (processed_PIL_Image, compressed_jpeg_bytes, prep_duration)
         """
         t0 = time.time()
         self.validate_image(file_path)
@@ -83,35 +92,64 @@ class OCRService:
                 if w * h > Image.MAX_IMAGE_PIXELS:
                     raise TextExtractionError(f"Image resolution too large ({w}x{h}). Max: 100MP.")
 
-                # Correct EXIF rotation
+                # 1. Correct EXIF rotation
                 img = ImageOps.exif_transpose(img)
 
-                # Flatten alpha/transparency channels on white background
+                # 2. RGB conversion (flatten alpha/transparency channels on white background)
                 if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
                     bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
                     if img.mode == "P":
                         img = img.convert("RGBA")
                     bg.paste(img, (0, 0), img)
-                    img = bg.convert("RGB")
+                    img = img.convert("RGB")
                 else:
                     img = img.convert("RGB")
 
-                # Dynamic downscaling for large photographs (e.g. 4000x3000 -> max 2400px)
-                MAX_OCR_DIM = 2400
-                if max(w, h) > MAX_OCR_DIM:
-                    scale = MAX_OCR_DIM / float(max(w, h))
-                    new_w = max(1, int(w * scale))
-                    new_h = max(1, int(h * scale))
+                # 3. Resize large images to maximum 1500 px
+                MAX_OCR_DIM = 1500
+                orig_w, orig_h = img.size
+                if max(orig_w, orig_h) > MAX_OCR_DIM:
+                    scale = MAX_OCR_DIM / float(max(orig_w, orig_h))
+                    new_w = max(1, int(orig_w * scale))
+                    new_h = max(1, int(orig_h * scale))
                     img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    logger.info(f"[OCR] Downscaled image from {w}x{h} to {new_w}x{new_h} for OCR optimization")
+                    logger.info(f"[OCR] Resized large image from {orig_w}x{orig_h} to {new_w}x{new_h} (max {MAX_OCR_DIM}px)")
 
-                # Grayscale, autocontrast & subtle sharpen
-                gray = img.convert("L")
-                enhanced = ImageOps.autocontrast(gray)
-                processed = enhanced.filter(ImageFilter.SHARPEN)
-                
+                # 4. Grayscale conversion
+                gray_img = img.convert("L")
+
+                # 5, 6, 7. Noise removal, contrast enhancement, adaptive thresholding
+                try:
+                    import cv2
+                    gray_np = np.array(gray_img)
+                    
+                    # Denoise with Gaussian blur
+                    denoised = cv2.GaussianBlur(gray_np, (3, 3), 0)
+                    
+                    # Increase contrast with CLAHE
+                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                    contrast_np = clahe.apply(denoised)
+                    
+                    # Adaptive thresholding
+                    thresh_np = cv2.adaptiveThreshold(
+                        contrast_np, 255,
+                        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv2.THRESH_BINARY, 11, 2
+                    )
+                    processed_pil = Image.fromarray(thresh_np)
+                except Exception as cv_err:
+                    logger.warning(f"[OCR] OpenCV preprocessing fallback to PIL: {cv_err}")
+                    med = gray_img.filter(ImageFilter.MedianFilter(size=3))
+                    enhanced = ImageEnhance.Contrast(med).enhance(1.5)
+                    processed_pil = ImageOps.autocontrast(enhanced)
+
+                # 8. Compression before OCR: in-memory JPEG compression (quality 85)
+                buffer = io.BytesIO()
+                processed_pil.convert("RGB").save(buffer, format="JPEG", quality=85, optimize=True)
+                compressed_bytes = buffer.getvalue()
+
                 prep_duration = time.time() - t0
-                return processed.copy(), prep_duration
+                return processed_pil, compressed_bytes, prep_duration
 
         except TextExtractionError:
             raise
@@ -125,97 +163,137 @@ class OCRService:
         cleaned = "".join(ch for ch in text if ch.isprintable() or ch in ('\n', '\r', '\t'))
         return "\n".join(line.strip() for line in cleaned.splitlines() if line.strip()).strip()
 
-    def _run_tesseract(self, processed_img: Image.Image) -> str:
-        """Run Primary OCR engine (PyTesseract)."""
-        import pytesseract
-        tess_path = self.get_tesseract_path()
-        if os.path.exists(tess_path):
-            pytesseract.pytesseract.tesseract_cmd = tess_path
-            
-        # PSM 3: Fully automatic page segmentation, OEM 3: Default LSTM
-        return pytesseract.image_to_string(processed_img, config='--oem 3 --psm 3', timeout=20)
-
-    def _run_easyocr(self, processed_img: Image.Image) -> Tuple[str, float]:
-        """Run Fallback OCR engine (EasyOCR). Returns (extracted_text, avg_confidence)."""
-        import numpy as np
-        reader = self.init_easyocr()
-        if not reader:
-            return "", 0.0
-
-        img_np = np.array(processed_img)
-        results = reader.readtext(img_np)
+    def _run_easyocr_with_timeout(self, processed_img: Image.Image, compressed_bytes: bytes, timeout_seconds: int = 7) -> Tuple[str, float, float]:
+        """Run Primary OCR engine (EasyOCR) with hard timeout. Returns (extracted_text, avg_confidence, duration)."""
+        t0 = time.time()
         
-        extracted_lines = []
-        total_conf = 0.0
-        for item in results:
-            if len(item) >= 3:
-                extracted_lines.append(item[1])
-                total_conf += float(item[2])
+        def _exec():
+            reader = self.init_easyocr()
+            if not reader:
+                return "", 0.0
+            
+            with Image.open(io.BytesIO(compressed_bytes)) as c_img:
+                img_np = np.array(c_img)
+            
+            results = reader.readtext(img_np, canvas_size=1500)
+            extracted_lines = []
+            total_conf = 0.0
+            for item in results:
+                if len(item) >= 3:
+                    extracted_lines.append(str(item[1]))
+                    total_conf += float(item[2])
+                    
+            text = "\n".join(extracted_lines).strip()
+            avg_conf = (total_conf / len(results)) if results else 0.0
+            return text, avg_conf
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_exec)
+            try:
+                text, conf = future.result(timeout=timeout_seconds)
+                duration = time.time() - t0
+                return text, conf, duration
+            except concurrent.futures.TimeoutError:
+                duration = time.time() - t0
+                logger.warning(f"[OCR] EasyOCR timed out after {duration:.2f}s (timeout={timeout_seconds}s)")
+                return "", 0.0, duration
+            except Exception as e:
+                duration = time.time() - t0
+                logger.warning(f"[OCR] EasyOCR failed in {duration:.2f}s: {e}")
+                return "", 0.0, duration
+
+    def _run_pytesseract_with_timeout(self, processed_img: Image.Image, timeout_seconds: int = 5) -> Tuple[str, float]:
+        """Run Fallback OCR engine (PyTesseract) with hard timeout. Returns (extracted_text, duration)."""
+        t0 = time.time()
+        
+        def _exec():
+            import pytesseract
+            tess_path = self.get_tesseract_path()
+            if os.path.exists(tess_path):
+                pytesseract.pytesseract.tesseract_cmd = tess_path
                 
-        text = "\n".join(extracted_lines).strip()
-        avg_conf = (total_conf / len(results)) if results else 0.0
-        return text, avg_conf
+            return pytesseract.image_to_string(processed_img, config='--oem 3 --psm 3', timeout=timeout_seconds)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_exec)
+            try:
+                text = future.result(timeout=timeout_seconds)
+                duration = time.time() - t0
+                return text, duration
+            except Exception as e:
+                duration = time.time() - t0
+                logger.warning(f"[OCR] PyTesseract fallback failed in {duration:.2f}s: {e}")
+                return "", duration
+
+    def merge_ocr_results(self, primary_text: str, fallback_text: str) -> str:
+        """
+        Merge results from EasyOCR and PyTesseract into a complete, non-redundant output.
+        """
+        clean_prim = self.clean_text(primary_text)
+        clean_fall = self.clean_text(fallback_text)
+
+        if not clean_prim:
+            return clean_fall
+        if not clean_fall:
+            return clean_prim
+
+        prim_lines = [line.strip() for line in clean_prim.splitlines() if line.strip()]
+        fall_lines = [line.strip() for line in clean_fall.splitlines() if line.strip()]
+
+        merged_lines = list(prim_lines)
+        for f_line in fall_lines:
+            # Append fallback line if it adds unique text not already in primary
+            if not any(f_line.lower() in p_line.lower() or p_line.lower() in f_line.lower() for p_line in prim_lines):
+                merged_lines.append(f_line)
+
+        return "\n".join(merged_lines).strip()
 
     def extract_text_from_image(self, file_path: str, timeout_seconds: int = 25) -> str:
         """
-        Main OCR pipeline:
-        1. Preprocess image once.
-        2. Execute Primary OCR (Tesseract).
-        3. If Primary OCR produces sufficient text, return immediately.
-        4. Otherwise execute Fallback OCR (EasyOCR).
-        5. Log detailed timing and character metrics.
+        Complete Image OCR Pipeline:
+        1. Preprocess & compress image (EXIF, RGB, grayscale, max 1500px, denoising, contrast, thresholding, compression).
+        2. Execute Primary Engine: EasyOCR.
+        3. Automatic Fallback: If EasyOCR confidence < 0.40 or timeout or < 15 chars -> PyTesseract fallback.
+        4. Merge results.
+        5. Return clean text or raise detailed error.
         """
         t0_total = time.time()
 
         # 1. Preprocess image
-        processed_img, prep_time = self.preprocess_image(file_path)
-        logger.info(f"[OCR] Image preprocessing: {prep_time:.2f}s")
+        processed_img, compressed_bytes, prep_duration = self.preprocess_image(file_path)
+        logger.info(f"[PERF] Image Preprocessing Time: {prep_duration:.2f}s")
 
-        # 2. Primary OCR (Tesseract)
-        t0_primary = time.time()
-        logger.info("[OCR] Primary OCR (Tesseract) started")
-        
-        primary_text = ""
-        try:
-            primary_text = self._run_tesseract(processed_img)
-        except Exception as e:
-            logger.warning(f"[OCR] Primary OCR (Tesseract) failed or timed out: {e}")
-            
-        primary_duration = time.time() - t0_primary
-        cleaned_primary = self.clean_text(primary_text)
-        
-        logger.info(f"[OCR] Primary OCR completed: {primary_duration:.2f}s")
-        logger.info(f"[OCR] Extracted characters: {len(cleaned_primary)}")
+        # 2. Primary Engine: EasyOCR
+        logger.info("[OCR] Primary OCR Engine (EasyOCR) started...")
+        easyocr_text, easyocr_conf, easyocr_duration = self._run_easyocr_with_timeout(
+            processed_img, compressed_bytes, timeout_seconds=7
+        )
+        cleaned_easyocr = self.clean_text(easyocr_text)
+        logger.info(f"[PERF] EasyOCR Time: {easyocr_duration:.2f}s | Confidence: {easyocr_conf:.2f} | Chars: {len(cleaned_easyocr)}")
 
-        # Check if primary OCR produced sufficient meaningful text (>= 15 characters)
-        if len(cleaned_primary) >= 15:
-            logger.info(f"[OCR] Primary OCR succeeded with {len(cleaned_primary)} characters. Skipping fallback.")
-            total_ocr_time = time.time() - t0_total
-            logger.info(f"[OCR] Total OCR time: {total_ocr_time:.2f}s")
-            return cleaned_primary
+        pytesseract_text = ""
+        pytesseract_duration = 0.0
+        fallback_triggered = False
 
-        # 3. Fallback OCR (EasyOCR) if primary failed or produced insufficient text
-        logger.info(f"[OCR] Primary OCR produced insufficient text ({len(cleaned_primary)} chars). Starting EasyOCR fallback...")
-        t0_fallback = time.time()
+        # 3. Fallback Condition: confidence < 0.40 OR timeout (easyocr_duration >= 6.8s) OR chars < 15
+        if easyocr_conf < 0.40 or len(cleaned_easyocr) < 15 or easyocr_duration >= 6.8:
+            fallback_triggered = True
+            reason = "confidence < 0.40" if easyocr_conf < 0.40 else ("timeout" if easyocr_duration >= 6.8 else "insufficient text")
+            logger.info(f"[OCR] EasyOCR produced insufficient result (reason: {reason}). Triggering PyTesseract fallback...")
+            pytesseract_text, pytesseract_duration = self._run_pytesseract_with_timeout(
+                processed_img, timeout_seconds=5
+            )
+            cleaned_pytesseract = self.clean_text(pytesseract_text)
+            logger.info(f"[PERF] PyTesseract Fallback Time: {pytesseract_duration:.2f}s | Chars: {len(cleaned_pytesseract)}")
 
-        fallback_text = ""
-        fallback_conf = 0.0
-        try:
-            fallback_text, fallback_conf = self._run_easyocr(processed_img)
-        except Exception as e:
-            logger.error(f"[OCR] EasyOCR fallback failed: {e}")
-
-        fallback_duration = time.time() - t0_fallback
-        cleaned_fallback = self.clean_text(fallback_text)
-
-        logger.info(f"[OCR] EasyOCR completed: {fallback_duration:.2f}s")
-        logger.info(f"[OCR] Extracted characters: {len(cleaned_fallback)}")
-        logger.info(f"[OCR] Confidence: {fallback_conf:.2f}")
-
-        final_text = cleaned_fallback if len(cleaned_fallback) > len(cleaned_primary) else cleaned_primary
+        # 4. Merge results
+        if fallback_triggered and pytesseract_text:
+            final_text = self.merge_ocr_results(cleaned_easyocr, pytesseract_text)
+        else:
+            final_text = cleaned_easyocr if cleaned_easyocr else self.clean_text(pytesseract_text)
 
         total_ocr_time = time.time() - t0_total
-        logger.info(f"[OCR] Total OCR time: {total_ocr_time:.2f}s")
+        logger.info(f"[PERF] Total OCR Extraction Time: {total_ocr_time:.2f}s (Primary: EasyOCR, Fallback: {'PyTesseract' if fallback_triggered else 'Skipped'})")
 
         if not final_text:
             # Check for blank image
@@ -227,9 +305,12 @@ class OCRService:
                 raise
             except Exception:
                 pass
+            if total_ocr_time >= timeout_seconds:
+                raise TextExtractionError(f"OCR extraction timed out after {timeout_seconds} seconds.")
             raise TextExtractionError("No readable text found in image.")
 
         return final_text
 
 
 ocr_service = OCRService()
+

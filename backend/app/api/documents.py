@@ -68,6 +68,17 @@ async def run_ai_analysis(document_id: str):
             
         doc = Document(**doc_data)
         
+        # Calculate upload overhead duration
+        uploaded_at_str = doc_data.get("uploaded_at")
+        t_upload = 0.0
+        if uploaded_at_str:
+            try:
+                from datetime import datetime, timezone
+                up_dt = datetime.fromisoformat(uploaded_at_str.replace('Z', '+00:00'))
+                t_upload = max(0.0, (datetime.now(timezone.utc) - up_dt).total_seconds())
+            except Exception:
+                pass
+
         # Step 1: Extract text
         update_document_status(db, document_id, "extracting")
         logger.info(f"Analysis started for document {document_id}")
@@ -106,7 +117,7 @@ async def run_ai_analysis(document_id: str):
             
             MIN_TEXT_LENGTH = 10
             if not extracted_text or not extracted_text.strip() or len(extracted_text.strip()) < MIN_TEXT_LENGTH:
-                if file_ext in ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp',
+                if file_ext in ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'webp',
                                   'image/jpeg', 'image/png', 'image/jpg', 'image/bmp', 'image/tiff', 'image/webp']:
                     raise TextExtractionError("No readable text found in image.")
                 else:
@@ -276,14 +287,21 @@ async def run_ai_analysis(document_id: str):
         logger.info(f"[PERF] Database: {t_db:.2f}s")
         
         t_total = time.time() - t0_total
-        logger.info(f"[PERF] Total analysis time: {t_total:.2f}s for document {document_id}")
+        logger.info(
+            f"[PERF] Full Pipeline Breakdown for Document {document_id}:\n"
+            f"  - Upload Time: {t_upload:.2f}s\n"
+            f"  - Text/OCR Extraction Time: {t_extract:.2f}s\n"
+            f"  - AI Analysis Time: {t_llm:.2f}s\n"
+            f"  - Total Processing Time: {t_total:.2f}s"
+        )
         
     except Exception as e:
         logger.error(f"Background analysis error for {document_id}: {e}", exc_info=True)
         try:
-            update_document_status(db, document_id, "failed", "Unsupported file structure")
+            update_document_status(db, document_id, "failed", str(e) or "Unsupported file structure")
         except Exception as update_err:
             logger.error(f"Failed to update document status to failed: {update_err}")
+
 
 
 @router.post("/upload")
