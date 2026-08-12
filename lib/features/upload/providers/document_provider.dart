@@ -49,86 +49,120 @@ class DocumentProvider extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   String? get uploadingDocId => _uploadingDocId;
 
-  /// Upload a document and start polling for analysis status
-  Future<Map<String, dynamic>?> uploadDocument(PlatformFile file) async {
+  /// Upload a document and await its complete analysis status (completed / failed)
+  Future<Map<String, dynamic>?> uploadAndAwaitAnalysis(
+    PlatformFile file, {
+    void Function(String status, String stageText, double progress)? onStageChange,
+  }) async {
     _isUploading = true;
     _errorMessage = null;
     notifyListeners();
 
+    onStageChange?.call('uploading', 'Uploading document...', 0.15);
+
     try {
       final result = await _service.uploadDocument(file);
-      if (result['success']) {
-        final docData = result['data']['document'];
-        _uploadingDocId = docData['id'];
-        debugPrint('[FILE_UPLOADED] File uploaded successfully: ${docData['name']} (ID: ${docData['id']})');
-        
-        // Add to local list immediately
-        _documents.insert(0, docData);
-        notifyListeners();
-
-        // Start polling for analysis status
-        debugPrint('[ANALYSIS_STARTED] Polling started for document: ${docData['id']}');
-        _pollAnalysisStatus(docData['id']);
-
-        _isUploading = false;
-        notifyListeners();
-        return docData;
-      } else {
-        _errorMessage = result['message'];
+      if (!result['success']) {
+        _errorMessage = result['message'] ?? 'Upload failed';
         _isUploading = false;
         notifyListeners();
         return null;
       }
+
+      final docData = result['data']['document'];
+      final docId = docData['id'] as String;
+      _uploadingDocId = docId;
+      _documents.insert(0, docData);
+      notifyListeners();
+
+      onStageChange?.call('extracting', 'Preparing image & extracting text...', 0.35);
+
+      // Poll until completed or failed (timeout after 60s max)
+      final completer = Completer<Map<String, dynamic>?>();
+      int pollCount = 0;
+
+      late Timer timer;
+      timer = Timer.periodic(const Duration(seconds: 2), (t) async {
+        pollCount++;
+        if (_isDisposed) {
+          t.cancel();
+          _activeTimers.remove(t);
+          if (!completer.isCompleted) completer.complete(null);
+          return;
+        }
+
+        final statusRes = await _service.getDocumentStatus(docId);
+        if (_isDisposed) {
+          t.cancel();
+          _activeTimers.remove(t);
+          if (!completer.isCompleted) completer.complete(null);
+          return;
+        }
+
+        if (statusRes['success']) {
+          final status = statusRes['data']['status'] as String? ?? 'pending';
+          final errorMsg = statusRes['data']['error_message'] as String?;
+
+          // Update document state in local list
+          final idx = _documents.indexWhere((d) => d['id'] == docId);
+          if (idx != -1) {
+            _documents[idx]['status'] = status;
+            _documents[idx]['risk_score'] = statusRes['data']['risk_score'];
+            _documents[idx]['risk_level'] = statusRes['data']['risk_level'];
+            _documents[idx]['error_message'] = errorMsg;
+            notifyListeners();
+          }
+
+          if (status == 'extracting') {
+            onStageChange?.call('extracting', 'Preparing image & extracting text...', 0.45);
+          } else if (status == 'analyzing') {
+            onStageChange?.call('analyzing', 'Analyzing legal content with AI...', 0.75);
+          } else if (status == 'completed') {
+            onStageChange?.call('completed', 'Analysis complete', 1.0);
+            t.cancel();
+            _activeTimers.remove(t);
+            _uploadingDocId = null;
+            _isUploading = false;
+            await fetchDocuments();
+            
+            // Get full detail
+            final detailRes = await _service.getDocumentDetail(docId);
+            final fullDoc = detailRes['success'] ? detailRes['data']['document'] : docData;
+            if (!completer.isCompleted) completer.complete(fullDoc);
+            return;
+          } else if (status == 'failed') {
+            onStageChange?.call('failed', 'Analysis failed', 0.0);
+            t.cancel();
+            _activeTimers.remove(t);
+            _uploadingDocId = null;
+            _isUploading = false;
+            _errorMessage = errorMsg ?? 'Document analysis failed';
+            notifyListeners();
+            if (!completer.isCompleted) completer.complete(null);
+            return;
+          }
+        }
+
+        if (pollCount > 30) { // 60s timeout limit
+          t.cancel();
+          _activeTimers.remove(t);
+          _uploadingDocId = null;
+          _isUploading = false;
+          _errorMessage = 'Analysis polling timed out';
+          notifyListeners();
+          if (!completer.isCompleted) completer.complete(null);
+        }
+      });
+
+      _activeTimers.add(timer);
+      return await completer.future;
+
     } catch (e) {
       _errorMessage = 'Upload failed: $e';
       _isUploading = false;
       notifyListeners();
       return null;
     }
-  }
-
-  /// Poll analysis status every 3 seconds
-  void _pollAnalysisStatus(String docId) {
-    late Timer timer;
-    timer = Timer.periodic(const Duration(seconds: 3), (t) async {
-      if (_isDisposed) {
-        t.cancel();
-        _activeTimers.remove(t);
-        return;
-      }
-      final result = await _service.getDocumentStatus(docId);
-      if (_isDisposed) {
-        t.cancel();
-        _activeTimers.remove(t);
-        return;
-      }
-      if (result['success']) {
-        final status = result['data']['status'];
-
-        // Update document in list
-        final index = _documents.indexWhere((d) => d['id'] == docId);
-        if (index != -1) {
-          _documents[index]['status'] = status;
-          _documents[index]['risk_score'] = result['data']['risk_score'];
-          _documents[index]['risk_level'] = result['data']['risk_level'];
-          _documents[index]['error_message'] = result['data']['error_message'];
-          notifyListeners();
-        }
-
-        if (status == 'completed' || status == 'failed') {
-          debugPrint('[ANALYSIS_COMPLETED] Analysis finished for document $docId with status: $status');
-          t.cancel();
-          _activeTimers.remove(t);
-          _uploadingDocId = null;
-          // Refresh full document list
-          await fetchDocuments();
-        }
-      } else {
-        t.cancel();
-        _activeTimers.remove(t);
-      }
-    });
-    _activeTimers.add(timer);
   }
 
   /// Fetch all documents

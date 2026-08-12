@@ -81,58 +81,37 @@ class _UploadScreenState extends State<UploadScreen> {
     });
   }
 
-  void _startProgressSimulation() {
+  Future<void> _uploadAndAnalyzeFile() async {
+    if (_selectedPlatformFile == null || _isAnalyzing) return;
+
     setState(() {
       _isAnalyzing = true;
-      _stageProgress = 0.0;
-      _currentStageText = "Uploading...";
+      _stageProgress = 0.05;
+      _currentStageText = "Uploading document...";
     });
-
-    _stageTimer = Timer.periodic(const Duration(milliseconds: 150), (timer) {
-      if (!mounted) return;
-      setState(() {
-        _stageProgress += 0.015;
-        if (_stageProgress > 0.95) _stageProgress = 0.95; // Hold near end until actual resolve
-
-        if (_stageProgress < 0.25) {
-          _currentStageText = "Uploading...";
-        } else if (_stageProgress < 0.50) {
-          _currentStageText = "Extracting Text...";
-        } else if (_stageProgress < 0.75) {
-          _currentStageText = "Running AI Analysis...";
-        } else {
-          _currentStageText = "Generating Report...";
-        }
-      });
-    });
-  }
-
-  void _stopProgressSimulation(bool success) {
-    _stageTimer?.cancel();
-    setState(() {
-      _isAnalyzing = false;
-      _stageProgress = success ? 1.0 : 0.0;
-    });
-  }
-
-  Future<void> _uploadAndAnalyzeFile() async {
-    if (_selectedPlatformFile == null) return;
-
-    _startProgressSimulation();
 
     final provider = context.read<DocumentProvider>();
-    final docData = await provider.uploadDocument(_selectedPlatformFile!);
+    final docData = await provider.uploadAndAwaitAnalysis(
+      _selectedPlatformFile!,
+      onStageChange: (status, stageText, progress) {
+        if (!mounted) return;
+        setState(() {
+          _currentStageText = stageText;
+          _stageProgress = progress;
+        });
+      },
+    );
 
     if (!mounted) return;
 
-    if (docData != null) {
-      _stopProgressSimulation(true);
-      context.read<AuthProvider>().refreshStats();
-      context.read<HistoryProvider>().loadHistory(); // Reload history grid
-
+    if (docData != null && docData['status'] == 'completed') {
       setState(() {
+        _isAnalyzing = false;
+        _stageProgress = 1.0;
         _completedDocData = docData;
       });
+      context.read<AuthProvider>().refreshStats();
+      context.read<HistoryProvider>().loadHistory();
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -142,12 +121,22 @@ class _UploadScreenState extends State<UploadScreen> {
         ),
       );
     } else {
-      _stopProgressSimulation(false);
+      setState(() {
+        _isAnalyzing = false;
+        _stageProgress = 0.0;
+      });
+      final errorMsg = provider.errorMessage ?? 'Analysis failed';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(provider.errorMessage ?? 'Upload failed'),
+          content: Text('Analysis Failed: $errorMsg'),
           backgroundColor: AppColors.error,
           behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () => _uploadAndAnalyzeFile(),
+          ),
         ),
       );
     }
@@ -548,15 +537,19 @@ class _UploadScreenState extends State<UploadScreen> {
           width: double.infinity,
           height: 54,
           child: ElevatedButton.icon(
-            onPressed: _uploadAndAnalyzeFile,
-            icon: const Icon(Icons.bolt_rounded, size: 20),
+            onPressed: _isAnalyzing ? null : _uploadAndAnalyzeFile,
+            icon: _isAnalyzing 
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.navy))
+                : const Icon(Icons.bolt_rounded, size: 20),
             label: Text(
-              'Analyze Document',
+              _isAnalyzing ? 'Analyzing Document...' : 'Analyze Document',
               style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.gold,
               foregroundColor: AppColors.navy,
+              disabledBackgroundColor: AppColors.gold.withOpacity(0.5),
+              disabledForegroundColor: AppColors.navy.withOpacity(0.7),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),

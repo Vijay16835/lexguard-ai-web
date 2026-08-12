@@ -14,12 +14,12 @@ from app.core.security import get_password_hash, verify_password
 class TestPasswordValidation(unittest.TestCase):
 
     def test_valid_passwords_schema(self):
-        # 1. Test standard 8-character password "10981098"
+        # 1. Test standard strong password "Password123!"
         try:
-            user_in = UserCreate(full_name="Test User", email="test@example.com", password="10981098", date_of_birth="2000-01-01")
-            self.assertEqual(user_in.password, "10981098")
+            user_in = UserCreate(full_name="Test User", email="test@example.com", password="Password123!", date_of_birth="2000-01-01")
+            self.assertEqual(user_in.password, "Password123!")
         except ValidationError:
-            self.fail("UserCreate raised ValidationError for '10981098'")
+            self.fail("UserCreate raised ValidationError for 'Password123!'")
 
         # 2. Test alphanumeric with symbols password "Password@123"
         try:
@@ -29,7 +29,7 @@ class TestPasswordValidation(unittest.TestCase):
             self.fail("UserCreate raised ValidationError for 'Password@123'")
 
         # 3. Test exactly 72 bytes password
-        pwd_72 = "a" * 72
+        pwd_72 = "Aa1@" + ("a" * 68)
         try:
             user_in = UserCreate(full_name="Test User", email="test@example.com", password=pwd_72, date_of_birth="2000-01-01")
             self.assertEqual(user_in.password, pwd_72)

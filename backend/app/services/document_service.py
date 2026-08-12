@@ -328,45 +328,9 @@ def preprocess_image_pillow(file_path: str):
 
 
 def extract_text_from_image(file_path: str) -> str:
-    """Validate, preprocess, and run OCR on the specified image file."""
-    import pytesseract
-
-    # Validate file
-    validate_image_file(file_path)
-    
-    # Configure path
-    tess_path = get_tesseract_path()
-    if os.path.exists(tess_path):
-        pytesseract.pytesseract.tesseract_cmd = tess_path
-    
-    # Preprocess
-    img = preprocess_image_pillow(file_path)
-    
-    # Run OCR with 30s timeout protection
-    try:
-        extracted_text = pytesseract.image_to_string(img, timeout=30)
-    except RuntimeError as re:
-        if "timeout" in str(re).lower():
-            raise TextExtractionError("OCR extraction timed out after 30 seconds.") from re
-        raise TextExtractionError(f"OCR engine runtime error: {re}") from re
-    except Exception as e:
-        logger.error(f"OCR execution failed: {e}", exc_info=True)
-        raise TextExtractionError(f"OCR extraction failed: {e}") from e
-        
-    cleaned_text = clean_extracted_text(extracted_text)
-    if not cleaned_text:
-        # Check if image is completely blank/solid color to provide specific diagnostic advice
-        from PIL import Image
-        try:
-            with Image.open(file_path) as test_img:
-                extrema = test_img.convert("L").getextrema()
-                if extrema and extrema[0] == extrema[1]:
-                    raise TextExtractionError("No readable text found in image (image is completely blank).")
-        except Exception:
-            pass
-        raise TextExtractionError("No readable text found in image.")
-        
-    return cleaned_text
+    """Validate, preprocess, and run high-performance OCR on the specified image file."""
+    from app.services.ocr_service import ocr_service
+    return ocr_service.extract_text_from_image(file_path)
 
 
 def ocr_pdf(file_path: str) -> str:

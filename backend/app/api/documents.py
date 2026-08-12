@@ -53,9 +53,12 @@ def update_document_status(db, document_id: str, status: str, error_message: Opt
 
 async def run_ai_analysis(document_id: str):
     """Background task: extract text from document and run Groq AI analysis."""
+    import time
     from app.services.firebase_service import firebase_service
     from app.services.document_service import TextExtractionError
     db = firebase_service
+    
+    t0_total = time.time()
     
     try:
         doc_data = db.get_document(document_id)
@@ -75,7 +78,6 @@ async def run_ai_analysis(document_id: str):
             local_dir = settings.UPLOAD_DIR
             local_path = os.path.join(local_dir, f"{document_id}.{doc.type}")
             os.makedirs(local_dir, exist_ok=True)
-            # Find the storage path (e.g. users/{user_id}/documents/{document_id}.{extension})
             storage_path = f"users/{doc.user_id}/documents/{document_id}.{doc.type}"
             supabase = get_supabase()
             try:
@@ -90,20 +92,18 @@ async def run_ai_analysis(document_id: str):
                 logger.error(f"Failed to download file from Storage for {document_id}")
                 update_document_status(db, document_id, "failed", "Unsupported file structure")
                 return
-            # Update path locally
             db.update_document(document_id, {"path": local_path})
             doc.path = local_path
             
         file_ext = get_file_extension(doc.name)
-        
         logger.info(f"Starting background text extraction for document_id={document_id}, ext={file_ext}")
         
-        # Text Extraction phase (running CPU-intensive parsing/OCR in worker thread to prevent blocking event loop)
+        # Text Extraction phase
+        t0_extract = time.time()
         try:
             import asyncio
             extracted_text = await asyncio.to_thread(extract_text, local_path, file_ext)
             
-            # Step 4: Validate Before AI Analysis
             MIN_TEXT_LENGTH = 10
             if not extracted_text or not extracted_text.strip() or len(extracted_text.strip()) < MIN_TEXT_LENGTH:
                 if file_ext in ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'webp',
@@ -122,13 +122,15 @@ async def run_ai_analysis(document_id: str):
             logger.error(f"Text extraction failed for {document_id}: {ex}", exc_info=True)
             return
             
-        logger.info(f"Text extracted successfully for {document_id}")
+        t_extract = time.time() - t0_extract
+        logger.info(f"[PERF] Text extraction: {t_extract:.2f}s")
+        
         db.update_document(document_id, {
             "extracted_text": extracted_text,
             "status": "analyzing"
         })
         
-        # Step 1.5: Create Vector Index for RAG
+        # Step 1.5: Vector Indexing
         try:
             from app.services.vector_service import vector_service
             await vector_service.create_vector_index(document_id, extracted_text)
@@ -136,17 +138,19 @@ async def run_ai_analysis(document_id: str):
             logger.error(f"Vector indexing failed for {document_id}: {e}")
         
         # Step 2: Run Groq AI analysis
+        t0_llm = time.time()
         try:
             logger.info(f"AI Analysis started for document {document_id}")
             analysis_result = await groq_service.analyze_document(extracted_text)
-            logger.info(f"AI Analysis completed successfully for document {document_id}")
+            t_llm = time.time() - t0_llm
+            logger.info(f"[PERF] LLM: {t_llm:.2f}s")
         except Exception as e:
             logger.error(f"Groq analysis failed for {document_id}: {e}")
             update_document_status(db, document_id, "failed", "AI analysis failed")
             return
         
         # Step 3: Save analysis results to Document
-        logger.info(f"Saving analysis results to Firestore for document {document_id}")
+        t0_db = time.time()
         try:
             db.update_document(document_id, {
                 "risk_score": analysis_result.get("risk_score", 0),
@@ -158,7 +162,6 @@ async def run_ai_analysis(document_id: str):
                 "analyzed_at": datetime.now(timezone.utc).isoformat()
             })
             
-            # Save detailed Analysis record
             analysis_data = {
                 "document_id": document_id,
                 "risk_level": analysis_result.get("risk_level", "Medium"),
@@ -172,7 +175,6 @@ async def run_ai_analysis(document_id: str):
             }
             db.save_analysis(document_id, analysis_data)
             
-            # Save extracted clauses
             db.delete_document_clauses(document_id)
             for clause_data in analysis_result.get("clauses", []):
                 db.save_clause({
@@ -188,7 +190,7 @@ async def run_ai_analysis(document_id: str):
             update_document_status(db, document_id, "failed", "Database save failed")
             return
             
-        # Save to Supabase PostgreSQL database
+        # Dual-write to Supabase PostgreSQL database
         conn = None
         try:
             import json
@@ -196,7 +198,6 @@ async def run_ai_analysis(document_id: str):
             if conn:
                 cur = conn.cursor()
                 try:
-                    # 1. Update documents table
                     cur.execute("""
                         UPDATE documents 
                         SET status = %s, 
@@ -219,7 +220,6 @@ async def run_ai_analysis(document_id: str):
                         document_id
                     ))
                     
-                    # 2. Insert/Update analysis table
                     cur.execute("""
                         INSERT INTO analysis (document_id, risk_level, risk_score, summary, ai_confidence, parties, important_dates, recommendations, raw_analysis_data)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -244,7 +244,6 @@ async def run_ai_analysis(document_id: str):
                         json.dumps(analysis_result)
                     ))
                     
-                    # 3. Insert clauses table
                     cur.execute("DELETE FROM clauses WHERE document_id = %s", (document_id,))
                     for clause_data in analysis_result.get("clauses", []):
                         cur.execute("""
@@ -260,7 +259,6 @@ async def run_ai_analysis(document_id: str):
                         ))
                         
                     conn.commit()
-                    logger.info(f"Saved analysis and clauses to PostgreSQL for document {document_id}")
                 except Exception as tx_err:
                     conn.rollback()
                     raise tx_err
@@ -273,8 +271,12 @@ async def run_ai_analysis(document_id: str):
         finally:
             if conn:
                 conn.close()
+                
+        t_db = time.time() - t0_db
+        logger.info(f"[PERF] Database: {t_db:.2f}s")
         
-        logger.info(f"Analysis successfully completed for document {document_id}")
+        t_total = time.time() - t0_total
+        logger.info(f"[PERF] Total analysis time: {t_total:.2f}s for document {document_id}")
         
     except Exception as e:
         logger.error(f"Background analysis error for {document_id}: {e}", exc_info=True)

@@ -28,11 +28,15 @@ async def startup_event():
     if not db_ok:
         logger.critical("[Startup] Database connectivity check failed! Please verify DATABASE_URL and pooler configuration.")
         
-    # 2. Email/SMTP configuration check
-    from app.services.email_service import email_service
-    email_ok = email_service.validate_configuration()
-    if not email_ok:
-        logger.warning("[Startup] Email/SMTP configuration check failed! OTP features might be unavailable.")
+    # 3. Pre-initialize OCR engines (Tesseract path & EasyOCR singleton)
+    from app.services.ocr_service import ocr_service
+    logger.info("[Startup] Pre-initializing OCR engines...")
+    try:
+        import asyncio
+        await asyncio.to_thread(ocr_service.init_easyocr)
+        logger.info("[Startup] OCR engines pre-initialized successfully.")
+    except Exception as ocr_err:
+        logger.warning(f"[Startup] Non-fatal OCR pre-initialization warning: {ocr_err}")
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
