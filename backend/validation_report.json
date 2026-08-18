@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-08-18T09:17:49Z",
+  "timestamp": "2026-08-18T09:24:51Z",
   "total_files": 11,
   "passed": 11,
   "failed": 0,
@@ -8,7 +8,7 @@
       "file": "sample.pdf",
       "mime_type": "application/pdf",
       "status": "PASSED",
-      "processing_time_seconds": 8.42,
+      "processing_time_seconds": 8.04,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -16,7 +16,7 @@
       "file": "simple.docx",
       "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "status": "PASSED",
-      "processing_time_seconds": 6.71,
+      "processing_time_seconds": 5.59,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -24,7 +24,7 @@
       "file": "large.docx",
       "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       "status": "PASSED",
-      "processing_time_seconds": 6.25,
+      "processing_time_seconds": 8.57,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -32,7 +32,7 @@
       "file": "small.txt",
       "mime_type": "text/plain",
       "status": "PASSED",
-      "processing_time_seconds": 4.96,
+      "processing_time_seconds": 7.91,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -40,7 +40,7 @@
       "file": "large.txt",
       "mime_type": "text/plain",
       "status": "PASSED",
-      "processing_time_seconds": 4.67,
+      "processing_time_seconds": 6.72,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -48,7 +48,7 @@
       "file": "sample.jpg",
       "mime_type": "image/jpeg",
       "status": "PASSED",
-      "processing_time_seconds": 6.79,
+      "processing_time_seconds": 6.46,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -56,7 +56,7 @@
       "file": "sample.jpeg",
       "mime_type": "image/jpeg",
       "status": "PASSED",
-      "processing_time_seconds": 5.49,
+      "processing_time_seconds": 9.79,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -64,7 +64,7 @@
       "file": "sample.png",
       "mime_type": "image/png",
       "status": "PASSED",
-      "processing_time_seconds": 6.38,
+      "processing_time_seconds": 8.84,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -72,7 +72,7 @@
       "file": "sample.webp",
       "mime_type": "image/webp",
       "status": "PASSED",
-      "processing_time_seconds": 8.0,
+      "processing_time_seconds": 6.69,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -80,7 +80,7 @@
       "file": "sample.tiff",
       "mime_type": "image/tiff",
       "status": "PASSED",
-      "processing_time_seconds": 7.41,
+      "processing_time_seconds": 5.56,
       "risk_score": 25,
       "risk_level": "Low"
     },
@@ -88,7 +88,7 @@
       "file": "sample.bmp",
       "mime_type": "image/bmp",
       "status": "PASSED",
-      "processing_time_seconds": 9.59,
+      "processing_time_seconds": 8.08,
       "risk_score": 25,
       "risk_level": "Low"
     }

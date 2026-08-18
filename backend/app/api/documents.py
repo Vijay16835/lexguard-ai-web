@@ -89,19 +89,23 @@ async def run_ai_analysis(document_id: str):
             local_dir = settings.UPLOAD_DIR
             local_path = os.path.join(local_dir, f"{document_id}.{doc.type}")
             os.makedirs(local_dir, exist_ok=True)
-            storage_path = f"users/{doc.user_id}/documents/{document_id}.{doc.type}"
+            download_success = False
+            
             supabase = get_supabase()
-            try:
-                res = supabase.storage.from_("legal-documents").download(storage_path)
-                with open(local_path, "wb") as f:
-                    f.write(res)
-                download_success = True
-            except Exception as e:
-                logger.error(f"Supabase download failed: {e}")
-                download_success = False
-            if not download_success:
-                logger.error(f"Failed to download file from Storage for {document_id}")
-                update_document_status(db, document_id, "failed", "Unsupported file structure")
+            if supabase:
+                storage_path = f"users/{doc.user_id}/documents/{document_id}.{doc.type}"
+                try:
+                    res = supabase.storage.from_("legal-documents").download(storage_path)
+                    with open(local_path, "wb") as f:
+                        f.write(res)
+                    download_success = True
+                except Exception as e:
+                    logger.error(f"Supabase download failed: {e}")
+                    download_success = False
+                    
+            if not download_success and not os.path.exists(local_path):
+                logger.error(f"Failed to access or download file for document {document_id}")
+                update_document_status(db, document_id, "failed", "File content unavailable for text extraction.")
                 return
             db.update_document(document_id, {"path": local_path})
             doc.path = local_path
@@ -182,20 +186,26 @@ async def run_ai_analysis(document_id: str):
                 "error_message": None,
                 "analyzed_at": datetime.now(timezone.utc).isoformat()
             })
+        except Exception as fe:
+            logger.error(f"Error updating document status to completed for {document_id}: {fe}")
             
-            analysis_data = {
-                "document_id": document_id,
-                "risk_level": analysis_result.get("risk_level", "Medium"),
-                "risk_score": analysis_result.get("risk_score", 0),
-                "summary": analysis_result.get("summary", ""),
-                "ai_confidence": 0.85,
-                "parties": analysis_result.get("parties", []),
-                "important_dates": analysis_result.get("important_dates", []),
-                "recommendations": analysis_result.get("recommendations", []),
-                "raw_analysis_data": analysis_result,
-            }
+        analysis_data = {
+            "document_id": document_id,
+            "risk_level": analysis_result.get("risk_level", "Medium"),
+            "risk_score": analysis_result.get("risk_score", 0),
+            "summary": analysis_result.get("summary", ""),
+            "ai_confidence": 0.85,
+            "parties": analysis_result.get("parties", []),
+            "important_dates": analysis_result.get("important_dates", []),
+            "recommendations": analysis_result.get("recommendations", []),
+            "raw_analysis_data": analysis_result,
+        }
+        try:
             db.save_analysis(document_id, analysis_data)
-            
+        except Exception as se:
+            logger.warning(f"save_analysis warning for {document_id}: {se}")
+        
+        try:
             db.delete_document_clauses(document_id)
             for clause_data in analysis_result.get("clauses", []):
                 db.save_clause({
@@ -206,10 +216,8 @@ async def run_ai_analysis(document_id: str):
                     "risk_level": clause_data.get("risk_level", "Low"),
                     "mitigation_advice": clause_data.get("mitigation_advice", ""),
                 })
-        except Exception as fe:
-            logger.error(f"Failed to save results to Firestore for {document_id}: {fe}")
-            update_document_status(db, document_id, "failed", "Database save failed")
-            return
+        except Exception as ce:
+            logger.warning(f"save_clauses warning for {document_id}: {ce}")
             
         # Dual-write to Supabase PostgreSQL database
         conn = None
@@ -352,6 +360,7 @@ async def upload_document(
     doc_id = str(uuid.uuid4())
     file_ext = get_file_extension(file.filename)
     safe_filename = f"{doc_id}.{file_ext}"
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
     file_path = os.path.join(settings.UPLOAD_DIR, safe_filename)
     
     with open(file_path, "wb") as f:

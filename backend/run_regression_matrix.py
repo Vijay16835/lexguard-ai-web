@@ -62,6 +62,14 @@ def run_matrix():
     token = login_res.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
+    # Clean up old test user documents to prevent storage quota limits
+    try:
+        user_docs = firebase_service.get_user_documents(user_data["id"])
+        for doc in user_docs:
+            firebase_service.delete_document(doc["id"])
+    except Exception as cleanup_err:
+        print(f"Pre-test document cleanup warning: {cleanup_err}")
+
     report = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "total_files": len(TEST_FILES),
