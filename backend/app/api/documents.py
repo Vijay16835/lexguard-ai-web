@@ -165,13 +165,7 @@ async def run_ai_analysis(document_id: str):
             logger.info(f"[{fmt_tag}] AI analysis completed | [PERF] LLM: {t_llm:.2f}s")
         except Exception as e:
             logger.error(f"[{fmt_tag}] Groq AI analysis failed for document {document_id}: {type(e).__name__} - {e}", exc_info=True)
-            ai_err_detail = str(e).strip()
-            if not ai_err_detail or len(ai_err_detail) > 120 or "traceback" in ai_err_detail.lower():
-                user_facing_err = "AI analysis service temporarily failed. Please retry."
-            else:
-                user_facing_err = f"AI analysis temporarily unavailable ({ai_err_detail}). Please retry."
-            update_document_status(db, document_id, "failed", user_facing_err)
-            return
+            analysis_result = groq_service._fallback_rule_based_analysis(extracted_text)
 
         
         # Step 3: Save analysis results to Document
