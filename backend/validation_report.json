@@ -1,86 +1,96 @@
-[
-  {
-    "format": "PDF",
-    "file": "backend/test_files/sample.pdf",
-    "status": "PASSED",
-    "extracted_length": 110,
-    "extraction_time_s": 0.14,
-    "ai_analysis_time_s": 0.0,
-    "total_time_s": 0.14,
-    "risk_level": "Low",
-    "doc_type": "Legal Agreement",
-    "summary_snippet": "This document contains standard legal terms and agreement provisions for operational and compliance "
-  },
-  {
-    "format": "DOCX",
-    "file": "backend/test_files/simple.docx",
-    "status": "PASSED",
-    "extracted_length": 58,
-    "extraction_time_s": 0.16,
-    "ai_analysis_time_s": 0.0,
-    "total_time_s": 0.16,
-    "risk_level": "Low",
-    "doc_type": "Legal Agreement",
-    "summary_snippet": "This document contains standard legal terms and agreement provisions for operational and compliance "
-  },
-  {
-    "format": "TXT",
-    "file": "backend/test_files/small.txt",
-    "status": "PASSED",
-    "extracted_length": 48,
-    "extraction_time_s": 0.0,
-    "ai_analysis_time_s": 0.0,
-    "total_time_s": 0.0,
-    "risk_level": "Low",
-    "doc_type": "Legal Agreement",
-    "summary_snippet": "This document contains standard legal terms and agreement provisions for operational and compliance "
-  },
-  {
-    "format": "JPG",
-    "file": "backend/test_files/sample.jpg",
-    "status": "PASSED",
-    "extracted_length": 135,
-    "extraction_time_s": 6.49,
-    "ai_analysis_time_s": 0.0,
-    "total_time_s": 6.49,
-    "risk_level": "Low",
-    "doc_type": "Legal Agreement",
-    "summary_snippet": "This document contains standard legal terms and agreement provisions for operational and compliance "
-  },
-  {
-    "format": "JPEG",
-    "file": "backend/test_files/sample.jpeg",
-    "status": "PASSED",
-    "extracted_length": 138,
-    "extraction_time_s": 6.09,
-    "ai_analysis_time_s": 0.0,
-    "total_time_s": 6.09,
-    "risk_level": "Low",
-    "doc_type": "Legal Agreement",
-    "summary_snippet": "This document contains standard legal terms and agreement provisions for operational and compliance "
-  },
-  {
-    "format": "PNG",
-    "file": "backend/test_files/sample.png",
-    "status": "PASSED",
-    "extracted_length": 67,
-    "extraction_time_s": 5.63,
-    "ai_analysis_time_s": 0.0,
-    "total_time_s": 5.63,
-    "risk_level": "Low",
-    "doc_type": "Legal Agreement",
-    "summary_snippet": "This document contains standard legal terms and agreement provisions for operational and compliance "
-  },
-  {
-    "format": "WEBP",
-    "file": "backend/test_files/sample.webp",
-    "status": "PASSED",
-    "extracted_length": 67,
-    "extraction_time_s": 5.58,
-    "ai_analysis_time_s": 0.0,
-    "total_time_s": 5.58,
-    "risk_level": "Low",
-    "doc_type": "Legal Agreement",
-    "summary_snippet": "This document contains standard legal terms and agreement provisions for operational and compliance "
-  }
-]
+{
+  "timestamp": "2026-08-18T06:17:17Z",
+  "total_files": 11,
+  "passed": 11,
+  "failed": 0,
+  "details": [
+    {
+      "file": "sample.pdf",
+      "mime_type": "application/pdf",
+      "status": "PASSED",
+      "processing_time_seconds": 69.1,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "simple.docx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "status": "PASSED",
+      "processing_time_seconds": 3.86,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "large.docx",
+      "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "status": "PASSED",
+      "processing_time_seconds": 4.05,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "small.txt",
+      "mime_type": "text/plain",
+      "status": "PASSED",
+      "processing_time_seconds": 3.37,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "large.txt",
+      "mime_type": "text/plain",
+      "status": "PASSED",
+      "processing_time_seconds": 4.18,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "sample.jpg",
+      "mime_type": "image/jpeg",
+      "status": "PASSED",
+      "processing_time_seconds": 14.02,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "sample.jpeg",
+      "mime_type": "image/jpeg",
+      "status": "PASSED",
+      "processing_time_seconds": 10.89,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "sample.png",
+      "mime_type": "image/png",
+      "status": "PASSED",
+      "processing_time_seconds": 26.5,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "sample.webp",
+      "mime_type": "image/webp",
+      "status": "PASSED",
+      "processing_time_seconds": 9.63,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "sample.tiff",
+      "mime_type": "image/tiff",
+      "status": "PASSED",
+      "processing_time_seconds": 11.64,
+      "risk_score": 25,
+      "risk_level": "Low"
+    },
+    {
+      "file": "sample.bmp",
+      "mime_type": "image/bmp",
+      "status": "PASSED",
+      "processing_time_seconds": 18.15,
+      "risk_score": 25,
+      "risk_level": "Low"
+    }
+  ]
+}

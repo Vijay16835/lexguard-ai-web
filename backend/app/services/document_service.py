@@ -22,8 +22,15 @@ def get_supabase():
     if _supabase_client is None:
         from supabase import create_client
         from app.core.config import settings
-        _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        if not settings.SUPABASE_URL or not settings.SUPABASE_KEY:
+            return None
+        try:
+            _supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        except Exception as e:
+            logger.warning(f"Failed to initialize Supabase client: {e}")
+            return None
     return _supabase_client
+
 
 
 class TextExtractionError(Exception):
@@ -109,7 +116,10 @@ def extract_text_from_doc(file_path: str) -> str:
 
 
 def extract_text_from_docx(file_path: str) -> str:
-    """Extract text from DOCX files."""
+    """Extract text from DOCX files with diagnostic logging."""
+    file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+    logger.info(f"[DOCX] File received: {os.path.basename(file_path)} | Size: {file_size} bytes")
+    logger.info("[DOCX] Extraction started")
     try:
         import docx
         doc = docx.Document(file_path)
@@ -125,15 +135,19 @@ def extract_text_from_docx(file_path: str) -> str:
                 if row_text:
                     text += row_text + "\n"
         
+        extracted_len = len(text.strip())
+        logger.info(f"[DOCX] Extraction completed | Extracted character count: {extracted_len}")
+        
         if not text.strip():
-            raise TextExtractionError("Unable to extract readable text from document.")
+            raise TextExtractionError("Could not extract readable text from the DOCX file.")
             
         return text.strip()
     except TextExtractionError:
         raise
     except Exception as e:
-        logger.error(f"DOCX extraction error: {e}")
-        raise TextExtractionError("Unsupported file structure") from e
+        logger.error(f"[DOCX] Extraction error: {type(e).__name__} - {e}")
+        raise TextExtractionError("Could not extract readable text from the DOCX file.") from e
+
 
 
 def extract_text_from_txt(file_path: str) -> str:

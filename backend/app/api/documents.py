@@ -107,7 +107,9 @@ async def run_ai_analysis(document_id: str):
             doc.path = local_path
             
         file_ext = get_file_extension(doc.name)
-        logger.info(f"Starting background text extraction for document_id={document_id}, ext={file_ext}")
+        fmt_tag = file_ext.upper()
+        logger.info(f"[{fmt_tag}] File received: {doc.name} | Size: {doc.size_in_mb} MB")
+        logger.info(f"[{fmt_tag}] Extraction started for document_id={document_id}")
         
         # Text Extraction phase
         t0_extract = time.time()
@@ -120,21 +122,23 @@ async def run_ai_analysis(document_id: str):
                 if file_ext in ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'webp',
                                   'image/jpeg', 'image/png', 'image/jpg', 'image/bmp', 'image/tiff', 'image/webp']:
                     raise TextExtractionError("No readable text found in image.")
+                elif file_ext in ['docx', 'doc']:
+                    raise TextExtractionError("Could not extract readable text from the DOCX file.")
                 else:
                     raise TextExtractionError("Unable to extract readable text from document.")
         except TextExtractionError as ete:
             error_reason = str(ete)
             update_document_status(db, document_id, "failed", error_reason)
-            logger.error(f"Text extraction failed for {document_id}: {error_reason}")
+            logger.error(f"[{fmt_tag}] Text extraction failed for {document_id}: {error_reason}")
             return
         except Exception as ex:
-            error_reason = "Unsupported file structure"
+            error_reason = "Could not extract readable text from document." if file_ext not in ['docx', 'doc'] else "Could not extract readable text from the DOCX file."
             update_document_status(db, document_id, "failed", error_reason)
-            logger.error(f"Text extraction failed for {document_id}: {ex}", exc_info=True)
+            logger.error(f"[{fmt_tag}] Text extraction failed for {document_id}: {type(ex).__name__}: {ex}", exc_info=True)
             return
             
         t_extract = time.time() - t0_extract
-        logger.info(f"[PERF] Text extraction: {t_extract:.2f}s")
+        logger.info(f"[{fmt_tag}] Extraction completed | Extracted character count: {len(extracted_text)} | [PERF] Text extraction: {t_extract:.2f}s")
         
         db.update_document(document_id, {
             "extracted_text": extracted_text,
@@ -151,14 +155,20 @@ async def run_ai_analysis(document_id: str):
         # Step 2: Run Groq AI analysis
         t0_llm = time.time()
         try:
-            logger.info(f"AI Analysis started for document {document_id}")
+            logger.info(f"[{fmt_tag}] AI analysis started for document {document_id}")
             analysis_result = await groq_service.analyze_document(extracted_text)
             t_llm = time.time() - t0_llm
-            logger.info(f"[PERF] LLM: {t_llm:.2f}s")
+            logger.info(f"[{fmt_tag}] AI analysis completed | [PERF] LLM: {t_llm:.2f}s")
         except Exception as e:
-            logger.error(f"Groq analysis failed for {document_id}: {e}")
-            update_document_status(db, document_id, "failed", "AI analysis failed")
+            logger.error(f"[{fmt_tag}] Groq AI analysis failed for document {document_id}: {type(e).__name__} - {e}", exc_info=True)
+            ai_err_detail = str(e).strip()
+            if not ai_err_detail or len(ai_err_detail) > 120 or "traceback" in ai_err_detail.lower():
+                user_facing_err = "AI analysis service temporarily failed. Please retry."
+            else:
+                user_facing_err = f"AI analysis temporarily unavailable ({ai_err_detail}). Please retry."
+            update_document_status(db, document_id, "failed", user_facing_err)
             return
+
         
         # Step 3: Save analysis results to Document
         t0_db = time.time()
