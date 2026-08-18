@@ -245,10 +245,9 @@ class OCRService:
         """
         Complete Image OCR Pipeline:
         1. Preprocess & compress image (EXIF, RGB, grayscale, max 1500px, CLAHE contrast, compression).
-        2. Execute Primary Engine: EasyOCR.
-        3. Automatic Fallback: If EasyOCR fails or confidence < 0.40 or < 15 chars -> PyTesseract fallback.
-        4. Merge results.
-        5. Return clean text or raise detailed error.
+        2. Execute Fast Primary Engine: PyTesseract (~0.5 - 2s execution).
+        3. Secondary Engine: EasyOCR fallback if PyTesseract produces insufficient text (< 15 chars).
+        4. Merge results and return clean text.
         """
         t0_total = time.time()
 
@@ -256,40 +255,40 @@ class OCRService:
         processed_img, compressed_bytes, prep_duration = self.preprocess_image(file_path)
         logger.info(f"[PERF] Image Preprocessing Time: {prep_duration*1000:.1f}ms ({prep_duration:.2f}s)")
 
-        # 2. Primary Engine: EasyOCR
-        logger.info("[OCR] Primary OCR Engine (EasyOCR) started...")
-        easyocr_text, easyocr_conf, easyocr_duration = self._run_easyocr_with_timeout(
-            processed_img, compressed_bytes, timeout_seconds=12
+        # 2. Fast Primary Engine: PyTesseract
+        logger.info("[OCR] Primary OCR Engine (PyTesseract) started...")
+        pytesseract_text, pytesseract_duration = self._run_pytesseract_with_timeout(
+            processed_img, timeout_seconds=8
         )
-        cleaned_easyocr = self.clean_text(easyocr_text)
-        logger.info(f"[PERF] EasyOCR Time: {easyocr_duration*1000:.1f}ms ({easyocr_duration:.2f}s) | Confidence: {easyocr_conf:.2f} | Chars: {len(cleaned_easyocr)}")
+        cleaned_pytesseract = self.clean_text(pytesseract_text)
+        logger.info(f"[PERF] PyTesseract Time: {pytesseract_duration*1000:.1f}ms ({pytesseract_duration:.2f}s) | Chars: {len(cleaned_pytesseract)}")
 
-        pytesseract_text = ""
-        pytesseract_duration = 0.0
+        easyocr_text = ""
+        easyocr_duration = 0.0
         fallback_triggered = False
 
-        # 3. Fallback Condition: confidence < 0.40 OR chars < 15 OR Primary failed
-        if not cleaned_easyocr or easyocr_conf < 0.40 or len(cleaned_easyocr) < 15:
+        # 3. Fallback Condition: PyTesseract produced insufficient text (< 15 chars)
+        if not cleaned_pytesseract or len(cleaned_pytesseract) < 15:
             fallback_triggered = True
-            reason = "no text" if not cleaned_easyocr else ("confidence < 0.40" if easyocr_conf < 0.40 else "insufficient text")
-            logger.info(f"[OCR] EasyOCR produced insufficient result (reason: {reason}). Triggering PyTesseract fallback...")
-            pytesseract_text, pytesseract_duration = self._run_pytesseract_with_timeout(
-                processed_img, timeout_seconds=8
+            reason = "no text" if not cleaned_pytesseract else "insufficient text (< 15 chars)"
+            logger.info(f"[OCR] PyTesseract produced insufficient result ({reason}). Triggering EasyOCR secondary fallback...")
+            easyocr_text, easyocr_conf, easyocr_duration = self._run_easyocr_with_timeout(
+                processed_img, compressed_bytes, timeout_seconds=12
             )
-            cleaned_pytesseract = self.clean_text(pytesseract_text)
-            logger.info(f"[PERF] PyTesseract Fallback Time: {pytesseract_duration*1000:.1f}ms ({pytesseract_duration:.2f}s) | Chars: {len(cleaned_pytesseract)}")
+            cleaned_easyocr = self.clean_text(easyocr_text)
+            logger.info(f"[PERF] EasyOCR Fallback Time: {easyocr_duration*1000:.1f}ms ({easyocr_duration:.2f}s) | Confidence: {easyocr_conf:.2f} | Chars: {len(cleaned_easyocr)}")
 
         # 4. Merge results
-        if fallback_triggered and pytesseract_text:
-            final_text = self.merge_ocr_results(cleaned_easyocr, pytesseract_text)
+        if fallback_triggered and easyocr_text:
+            final_text = self.merge_ocr_results(cleaned_pytesseract, easyocr_text)
         else:
-            final_text = cleaned_easyocr if cleaned_easyocr else self.clean_text(pytesseract_text)
+            final_text = cleaned_pytesseract if cleaned_pytesseract else self.clean_text(easyocr_text)
 
         total_ocr_time = time.time() - t0_total
         logger.info(
             f"[PERF] IMAGE PIPELINE - Preprocess: {prep_duration*1000:.1f}ms | "
             f"OCR: {total_ocr_time*1000:.1f}ms | Total: {total_ocr_time*1000:.1f}ms "
-            f"(Primary: EasyOCR, Fallback: {'PyTesseract' if fallback_triggered else 'Skipped'})"
+            f"(Primary: PyTesseract, Secondary: {'EasyOCR' if fallback_triggered else 'Skipped'})"
         )
 
         if not final_text:

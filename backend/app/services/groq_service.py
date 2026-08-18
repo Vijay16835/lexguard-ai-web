@@ -37,52 +37,83 @@ class GroqService:
                 "recommendations": ["Review terms periodically"],
                 "document_type": "Legal Agreement"
             })
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
+        FALLBACK_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192"]
+        model_to_use = self.model
         
-        import asyncio
-        import httpx
+        total_input_chars = sum(len(m.get("content", "")) for m in messages)
+        approx_tokens = total_input_chars // 4
         
+        logger.info(
+            f"[AI PIPELINE] Provider: Groq API | Model: {model_to_use} | "
+            f"Input Chars: {total_input_chars} | Approx Tokens: ~{approx_tokens}"
+        )
+
         backoffs = [0, 1, 2, 4, 8]  # Delays: Attempt 1 (0s), 2 (1s), 3 (2s), 4 (4s), 5 (8s)
         max_attempts = len(backoffs)
         
         for attempt_idx, delay in enumerate(backoffs):
             attempt_num = attempt_idx + 1
             if delay > 0:
-                print(f"[Groq Service] Waiting {delay} seconds before attempt {attempt_num}...")
+                logger.info(f"[AI PIPELINE] Retrying after {delay}s backoff (Attempt {attempt_num}/{max_attempts})...")
                 await asyncio.sleep(delay)
                 
+            t0_req = time.time()
             try:
-                print(f"[Groq Service] Attempt {attempt_num}/{max_attempts} for Groq call...")
+                payload = {
+                    "model": model_to_use,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                logger.info(f"[AI PIPELINE] Request Start | Model: {model_to_use} | Attempt {attempt_num}/{max_attempts}")
                 async with httpx.AsyncClient(timeout=120.0) as client:
                     response = await client.post(
                         GROQ_API_URL,
                         headers=self.headers,
                         json=payload,
                     )
+                    res_time = time.time() - t0_req
+                    logger.info(f"[AI PIPELINE] Response Received | Status: {response.status_code} | Duration: {res_time:.2f}s")
                     response.raise_for_status()
                     data = response.json()
                     return data["choices"][0]["message"]["content"]
             except httpx.HTTPStatusError as e:
+                res_time = time.time() - t0_req
                 status_code = e.response.status_code
-                print(f"Groq API HTTP error (Attempt {attempt_num}/{max_attempts}): {status_code} - {e.response.text}")
+                logger.error(
+                    f"[AI PIPELINE] HTTP Error {status_code} after {res_time:.2f}s | "
+                    f"Attempt {attempt_num}/{max_attempts} | Error: {e.response.text[:200]}"
+                )
                 
+                # If model not found (404), cycle to next fallback model
+                if status_code == 404:
+                    for alt in FALLBACK_MODELS:
+                        if alt != model_to_use:
+                            logger.warning(f"[AI PIPELINE] Model '{model_to_use}' not found (404). Falling back to '{alt}'...")
+                            model_to_use = alt
+                            break
+                    continue
+
                 # Check if error is retryable (429, 5xx)
                 is_retryable = (status_code == 429) or (500 <= status_code < 600)
                 
                 if not is_retryable or attempt_num == max_attempts:
-                    raise Exception(f"Groq API error: {status_code}")
+                    raise Exception(f"Groq API error: {status_code}") from e
             except (httpx.TimeoutException, httpx.RequestError) as e:
-                print(f"Groq API network/timeout error (Attempt {attempt_num}/{max_attempts}): {e}")
+                res_time = time.time() - t0_req
+                logger.error(
+                    f"[AI PIPELINE] Network/Timeout error ({type(e).__name__}) after {res_time:.2f}s | "
+                    f"Attempt {attempt_num}/{max_attempts} | Error: {e}"
+                )
                 if attempt_num == max_attempts:
                     raise
             except Exception as e:
-                print(f"Groq API unexpected error (Attempt {attempt_num}/{max_attempts}): {e}")
-                traceback.print_exc()
+                res_time = time.time() - t0_req
+                logger.error(
+                    f"[AI PIPELINE] Unexpected error ({type(e).__name__}) after {res_time:.2f}s | "
+                    f"Attempt {attempt_num}/{max_attempts} | Error: {e}",
+                    exc_info=True
+                )
                 if attempt_num == max_attempts:
                     raise
 

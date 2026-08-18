@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import stat
 import shutil
 import urllib.request
@@ -116,36 +117,46 @@ def extract_text_from_doc(file_path: str) -> str:
 
 
 def extract_text_from_docx(file_path: str) -> str:
-    """Extract text from DOCX files with diagnostic logging."""
+    """Extract text from DOCX files with detailed structure extraction and diagnostic logging."""
+    t0 = time.time()
     file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
-    logger.info(f"[DOCX] File received: {os.path.basename(file_path)} | Size: {file_size} bytes")
-    logger.info("[DOCX] Extraction started")
+    logger.info(f"[DOCX PIPELINE] File: {os.path.basename(file_path)} | Size: {file_size} bytes")
+    logger.info("[DOCX PIPELINE] Extraction started")
     try:
         import docx
         doc = docx.Document(file_path)
-        text = ""
+        text_blocks = []
+        para_count = len(doc.paragraphs)
+        table_count = len(doc.tables)
+        
         for paragraph in doc.paragraphs:
-            if paragraph.text.strip():
-                text += paragraph.text + "\n"
+            val = paragraph.text.strip()
+            if val:
+                text_blocks.append(val)
         
         # Extract cell text from tables
         for table in doc.tables:
             for row in table.rows:
-                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
-                if row_text:
-                    text += row_text + "\n"
+                cell_texts = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cell_texts:
+                    text_blocks.append(" | ".join(cell_texts))
         
-        extracted_len = len(text.strip())
-        logger.info(f"[DOCX] Extraction completed | Extracted character count: {extracted_len}")
+        full_text = "\n".join(text_blocks).strip()
+        dur = time.time() - t0
+        extracted_len = len(full_text)
+        logger.info(
+            f"[DOCX PIPELINE] Extraction completed in {dur:.3f}s | "
+            f"Paragraphs: {para_count} | Tables: {table_count} | Characters: {extracted_len}"
+        )
         
-        if not text.strip():
+        if not full_text:
             raise TextExtractionError("Could not extract readable text from the DOCX file.")
             
-        return text.strip()
+        return full_text
     except TextExtractionError:
         raise
     except Exception as e:
-        logger.error(f"[DOCX] Extraction error: {type(e).__name__} - {e}")
+        logger.error(f"[DOCX PIPELINE] Extraction failed: {type(e).__name__} - {e}", exc_info=True)
         raise TextExtractionError("Could not extract readable text from the DOCX file.") from e
 
 
