@@ -41,20 +41,26 @@ class OCRService:
         return self._tesseract_path
 
     def init_easyocr(self):
-        """Initialize EasyOCR singleton reader once (CPU/GPU safe)."""
+        """Lazily initialize EasyOCR singleton reader once on demand (CPU mode only)."""
         if self._easyocr_reader is None:
-            logger.info("[OCR] Initializing EasyOCR singleton reader (English)...")
-            t0 = time.time()
-            try:
-                import easyocr
-                # Disable GPU if CUDA unavailable to prevent warnings
-                self._easyocr_reader = easyocr.Reader(['en'], gpu=False)
-                self._easyocr_initialized = True
-                logger.info(f"[OCR] EasyOCR singleton reader initialized in {time.time() - t0:.2f}s")
-            except Exception as e:
-                logger.error(f"[OCR] EasyOCR reader initialization failed: {e}")
-                self._easyocr_reader = None
+            import threading
+            if not hasattr(self, '_lock'):
+                self._lock = threading.Lock()
+            with self._lock:
+                if self._easyocr_reader is None:
+                    logger.info("[OCR] Lazily initializing EasyOCR singleton reader (CPU mode)...")
+                    t0 = time.time()
+                    try:
+                        import easyocr
+                        # Disable GPU explicitly for 512MB RAM environment
+                        self._easyocr_reader = easyocr.Reader(['en'], gpu=False)
+                        self._easyocr_initialized = True
+                        logger.info(f"[OCR] EasyOCR reader lazily initialized in {time.time() - t0:.2f}s")
+                    except Exception as e:
+                        logger.error(f"[OCR] EasyOCR reader initialization failed/skipped: {e}")
+                        self._easyocr_reader = None
         return self._easyocr_reader
+
 
     def validate_image(self, file_path: str):
         """Validate image existence, non-emptiness, and pixel resolution bounds."""

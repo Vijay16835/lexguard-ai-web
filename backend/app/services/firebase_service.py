@@ -106,8 +106,8 @@ def _get_pg_pool():
             except Exception as parse_err:
                 logger.warning(f"[Database Service] Failed to parse/migrate DATABASE_URL: {parse_err}")
                 
-            _pg_pool = psycopg2.pool.ThreadedConnectionPool(2, 10, dsn=db_url, connect_timeout=5)
-            logger.info("psycopg2 ThreadedConnectionPool initialised (min=2, max=10).")
+            _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 3, dsn=db_url, connect_timeout=5)
+            logger.info("psycopg2 ThreadedConnectionPool initialised (min=1, max=3).")
         except Exception as e:
             _pool_init_error = e
             logger.error(f"Failed to create psycopg2 pool: {type(e).__name__}: {str(e)}")
