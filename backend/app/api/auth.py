@@ -638,7 +638,13 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 @router.get("/health")
 async def health_check():
-    return {"status": "ok", "message": "Auth service is healthy"}
+    return {
+        "status": "ok",
+        "message": "Auth service is healthy",
+        "commit": "aeb2518",
+        "version": "1.0.1"
+    }
+
 
 
 @router.post("/logout")
