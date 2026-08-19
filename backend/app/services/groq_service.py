@@ -8,6 +8,12 @@ import httpx
 import traceback
 from app.core.config import settings
 
+import logging
+import time
+import asyncio
+
+logger = logging.getLogger(__name__)
+
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 class GroqService:
@@ -19,42 +25,28 @@ class GroqService:
             "Content-Type": "application/json",
         }
 
+    def is_groq_configured(self) -> bool:
+        return bool(self.api_key and "your_groq" not in str(self.api_key).lower())
+
     async def _call_groq(self, messages: list, temperature: float = 0.3, max_tokens: int = 4096) -> str:
-        """Make a request to Groq API and return the response text with retry on 429/timeouts."""
-        if not self.api_key or "your_groq" in self.api_key.lower():
-            print("[Groq Service] GROQ_API_KEY not configured. Returning local analysis fallback.")
-            return json.dumps({
-                "summary": "This document contains standard legal terms and agreement provisions for operational and compliance purposes.",
-                "detailed_summary": "Detailed summary: The document outlines rights, obligations, and terms for the involved parties.",
-                "key_points": ["Document uploaded and parsed successfully", "Legal provisions extracted"],
-                "risk_level": "Low",
-                "risk_score": 25,
-                "risks": [{"category": "General Compliance", "description": "Standard terms apply", "severity": "Low"}],
-                "clauses": [{"title": "General Terms", "content": "Standard operational clause", "risk_level": "Low", "explanation": "Standard clause"}],
-                "parties": ["Party A", "Party B"],
-                "important_dates": [],
-                "obligations": [],
-                "recommendations": ["Review terms periodically"],
-                "document_type": "Legal Agreement"
-            })
+        """Make a request to Groq API with automatic retries on transient errors."""
+        if not self.is_groq_configured():
+            logger.info("GROQ_CONFIGURED=NO | AI_PROVIDER=Local Legal Analysis Engine")
+            raise ValueError("GROQ_API_KEY not configured")
+
         FALLBACK_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192"]
         model_to_use = self.model
         
         total_input_chars = sum(len(m.get("content", "")) for m in messages)
         approx_tokens = total_input_chars // 4
-        
-        logger.info(
-            f"[AI PIPELINE] Provider: Groq API | Model: {model_to_use} | "
-            f"Input Chars: {total_input_chars} | Approx Tokens: ~{approx_tokens}"
-        )
 
-        backoffs = [0, 1, 2, 4, 8]  # Delays: Attempt 1 (0s), 2 (1s), 3 (2s), 4 (4s), 5 (8s)
+        backoffs = [0, 1, 2, 4]
         max_attempts = len(backoffs)
         
+        last_error = None
         for attempt_idx, delay in enumerate(backoffs):
             attempt_num = attempt_idx + 1
             if delay > 0:
-                logger.info(f"[AI PIPELINE] Retrying after {delay}s backoff (Attempt {attempt_num}/{max_attempts})...")
                 await asyncio.sleep(delay)
                 
             t0_req = time.time()
@@ -65,57 +57,50 @@ class GroqService:
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                 }
-                logger.info(f"[AI PIPELINE] Request Start | Model: {model_to_use} | Attempt {attempt_num}/{max_attempts}")
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.post(
                         GROQ_API_URL,
                         headers=self.headers,
                         json=payload,
                     )
                     res_time = time.time() - t0_req
-                    logger.info(f"[AI PIPELINE] Response Received | Status: {response.status_code} | Duration: {res_time:.2f}s")
-                    response.raise_for_status()
-                    data = response.json()
-                    return data["choices"][0]["message"]["content"]
-            except httpx.HTTPStatusError as e:
-                res_time = time.time() - t0_req
-                status_code = e.response.status_code
-                logger.error(
-                    f"[AI PIPELINE] HTTP Error {status_code} after {res_time:.2f}s | "
-                    f"Attempt {attempt_num}/{max_attempts} | Error: {e.response.text[:200]}"
-                )
-                
-                # If model not found (404), cycle to next fallback model
-                if status_code == 404:
-                    for alt in FALLBACK_MODELS:
-                        if alt != model_to_use:
-                            logger.warning(f"[AI PIPELINE] Model '{model_to_use}' not found (404). Falling back to '{alt}'...")
-                            model_to_use = alt
-                            break
-                    continue
+                    if response.status_code == 200:
+                        data = response.json()
+                        return data["choices"][0]["message"]["content"]
+                    
+                    status_code = response.status_code
+                    sanitized_err = response.text[:150].replace('\n', ' ')
+                    logger.warning(
+                        f"AI_ANALYSIS_FAILURE\n"
+                        f"ERROR_TYPE=HTTPStatusError\n"
+                        f"HTTP_STATUS={status_code}\n"
+                        f"SANITIZED_ERROR={sanitized_err}\n"
+                        f"FALLBACK_STATUS=RETRYING_ATTEMPT_{attempt_num}"
+                    )
+                    
+                    if status_code == 404:
+                        for alt in FALLBACK_MODELS:
+                            if alt != model_to_use:
+                                model_to_use = alt
+                                break
+                    elif status_code in (401, 403):
+                        # Non-retryable auth error: stop retrying and fail over immediately
+                        raise RuntimeError(f"Groq API returned HTTP {status_code} - Auth failed")
 
-                # Check if error is retryable (429, 5xx)
-                is_retryable = (status_code == 429) or (500 <= status_code < 600)
-                
-                if not is_retryable or attempt_num == max_attempts:
-                    raise Exception(f"Groq API error: {status_code}") from e
             except (httpx.TimeoutException, httpx.RequestError) as e:
                 res_time = time.time() - t0_req
-                logger.error(
-                    f"[AI PIPELINE] Network/Timeout error ({type(e).__name__}) after {res_time:.2f}s | "
-                    f"Attempt {attempt_num}/{max_attempts} | Error: {e}"
+                sanitized_err = str(e)[:150].replace('\n', ' ')
+                logger.warning(
+                    f"AI_ANALYSIS_FAILURE\n"
+                    f"ERROR_TYPE={type(e).__name__}\n"
+                    f"HTTP_STATUS=NONE\n"
+                    f"SANITIZED_ERROR={sanitized_err}\n"
+                    f"FALLBACK_STATUS=RETRYING_ATTEMPT_{attempt_num}"
                 )
-                if attempt_num == max_attempts:
-                    raise
-            except Exception as e:
-                res_time = time.time() - t0_req
-                logger.error(
-                    f"[AI PIPELINE] Unexpected error ({type(e).__name__}) after {res_time:.2f}s | "
-                    f"Attempt {attempt_num}/{max_attempts} | Error: {e}",
-                    exc_info=True
-                )
-                if attempt_num == max_attempts:
-                    raise
+                last_error = e
+
+        raise RuntimeError(f"Groq API call unfulfilled after {max_attempts} attempts")
+
 
     def _fallback_rule_based_analysis(self, text: str) -> dict:
         """Generate content-aware structured legal analysis from document text when LLM is unavailable."""

@@ -112,8 +112,6 @@ async def run_ai_analysis(document_id: str):
             
         file_ext = get_file_extension(doc.name)
         fmt_tag = file_ext.upper()
-        logger.info(f"[{fmt_tag}] File received: {doc.name} | Size: {doc.size_in_mb} MB")
-        logger.info(f"[{fmt_tag}] Extraction started for document_id={document_id}")
         
         # Text Extraction phase
         t0_extract = time.time()
@@ -133,16 +131,41 @@ async def run_ai_analysis(document_id: str):
         except TextExtractionError as ete:
             error_reason = str(ete)
             update_document_status(db, document_id, "failed", error_reason)
-            logger.error(f"[{fmt_tag}] Text extraction failed for {document_id}: {error_reason}")
+            logger.error(
+                f"AI_ANALYSIS_FAILURE\n"
+                f"ERROR_TYPE={type(ete).__name__}\n"
+                f"HTTP_STATUS=NONE\n"
+                f"SANITIZED_ERROR={error_reason}\n"
+                f"FALLBACK_STATUS=FAILED_UNREADABLE_TEXT\n"
+                f"FINAL_DOCUMENT_STATUS=failed"
+            )
             return
         except Exception as ex:
             error_reason = "Could not extract readable text from document." if file_ext not in ['docx', 'doc'] else "Could not extract readable text from the DOCX file."
             update_document_status(db, document_id, "failed", error_reason)
-            logger.error(f"[{fmt_tag}] Text extraction failed for {document_id}: {type(ex).__name__}: {ex}", exc_info=True)
+            logger.error(
+                f"AI_ANALYSIS_FAILURE\n"
+                f"ERROR_TYPE={type(ex).__name__}\n"
+                f"HTTP_STATUS=NONE\n"
+                f"SANITIZED_ERROR={error_reason}\n"
+                f"FALLBACK_STATUS=FAILED_EXTRACTION_EXCEPT\n"
+                f"FINAL_DOCUMENT_STATUS=failed"
+            )
             return
             
         t_extract = time.time() - t0_extract
-        logger.info(f"[{fmt_tag}] Extraction completed | Extracted character count: {len(extracted_text)} | [PERF] Text extraction: {t_extract:.2f}s")
+        groq_cfg = "YES" if groq_service.is_groq_configured() else "NO"
+        ai_prov = "Groq API" if groq_cfg == "YES" else "Local Legal Analysis Engine"
+
+        logger.info(
+            f"ANALYSIS_PIPELINE_START\n"
+            f"FILE_TYPE={fmt_tag}\n"
+            f"TEXT_EXTRACTION_STATUS=SUCCESS\n"
+            f"TEXT_LENGTH={len(extracted_text)}\n"
+            f"AI_PROVIDER={ai_prov}\n"
+            f"GROQ_CONFIGURED={groq_cfg}\n"
+            f"AI_ANALYSIS_START"
+        )
         
         db.update_document(document_id, {
             "extracted_text": extracted_text,
@@ -156,19 +179,25 @@ async def run_ai_analysis(document_id: str):
         except Exception as e:
             logger.error(f"Vector indexing failed for {document_id}: {e}")
         
-        # Step 2: Run Groq AI analysis
+        # Step 2: Run Groq AI analysis with fail-safe local fallback
         t0_llm = time.time()
+        used_fallback = False
         try:
-            logger.info(f"[{fmt_tag}] AI analysis started for document {document_id}")
             analysis_result = await groq_service.analyze_document(extracted_text)
             t_llm = time.time() - t0_llm
-            logger.info(f"[{fmt_tag}] AI analysis completed | [PERF] LLM: {t_llm:.2f}s")
         except Exception as e:
-            logger.error(f"[{fmt_tag}] Groq AI analysis failed for document {document_id}: {type(e).__name__} - {e}", exc_info=True)
+            logger.warning(f"Groq API call raised exception ({type(e).__name__}). Activating Local Legal Analysis Engine fallback...")
             analysis_result = groq_service._fallback_rule_based_analysis(extracted_text)
+            used_fallback = True
 
+        logger.info(
+            f"AI_ANALYSIS_SUCCESS\n"
+            f"FALLBACK_STATUS={'USED_LOCAL_ENGINE' if (used_fallback or groq_cfg == 'NO') else 'NOT_NEEDED'}\n"
+            f"FINAL_DOCUMENT_STATUS=completed"
+        )
         
         # Step 3: Save analysis results to Document
+
         t0_db = time.time()
         try:
             db.update_document(document_id, {
