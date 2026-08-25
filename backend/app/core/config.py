@@ -32,26 +32,33 @@ class Settings(BaseSettings):
             self.POSTGRES_USER = "postgres.jrrbplpzqzvvtwyqomdi"
 
         # 3. Assemble/sanitize DATABASE_URL
-        # Check if DATABASE_URL was overridden by environment or .env (which Pydantic reads into self.DATABASE_URL)
         env_database_url = os.environ.get("DATABASE_URL") or self.DATABASE_URL
+        
+        # Check all possible password environment variables
+        resolved_password = (
+            os.environ.get("POSTGRES_PASSWORD") or 
+            os.environ.get("SUPABASE_PASSWORD") or 
+            os.environ.get("SUPABASE_DB_PASSWORD") or 
+            os.environ.get("SUPABASE_POSTGRES_PASSWORD") or 
+            os.environ.get("DB_PASSWORD") or 
+            self.POSTGRES_PASSWORD
+        )
+        if resolved_password and resolved_password != "[YOUR-SUPABASE-PASSWORD]":
+            self.POSTGRES_PASSWORD = resolved_password
         
         # If the URL contains default placeholders or is empty:
         if not env_database_url or "[YOUR-SUPABASE-PASSWORD]" in env_database_url:
-            # Construct from individual fields
             pwd = self.POSTGRES_PASSWORD
-            # Make sure it's URL-encoded
             encoded_pwd = urllib.parse.quote_plus(urllib.parse.unquote(pwd))
             port = 6543 if "pooler" in self.POSTGRES_SERVER else 5432
             self.DATABASE_URL = f"postgresql://{self.POSTGRES_USER}:{encoded_pwd}@{self.POSTGRES_SERVER}:{port}/{self.POSTGRES_DB}"
         else:
-            # Sanitize the provided DATABASE_URL
             self.DATABASE_URL = self.sanitize_db_url(env_database_url)
             
         # 4. Print resolved database host, user, port, and database name (masking password)
         try:
             parsed = urllib.parse.urlparse(self.DATABASE_URL)
-            # Mask password
-            masked_pwd = "****" if parsed.password else "None"
+            masked_pwd = "****" if parsed.password and parsed.password != "[YOUR-SUPABASE-PASSWORD]" else "None/Placeholder"
             print(f"[Database Config] Resolved Database Connection Parameters:")
             print(f"  - Host: {parsed.hostname}")
             print(f"  - User: {parsed.username}")
