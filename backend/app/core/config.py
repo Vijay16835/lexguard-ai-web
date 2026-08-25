@@ -105,9 +105,10 @@ class Settings(BaseSettings):
                 host = host_port
                 port = "6543"
 
-            # Correct pooler prefix
-            if host == "aws-0-ap-south-1.pooler.supabase.com":
+            # Automatically convert IPv6 direct Supabase host to IPv4 Transaction Pooler
+            if "supabase.co" in host or host == "aws-0-ap-south-1.pooler.supabase.com":
                 host = "aws-1-ap-south-1.pooler.supabase.com"
+                port = "6543"
 
             # Ensure correct user for pooler
             if host.endswith(".pooler.supabase.com") and not username.endswith(".jrrbplpzqzvvtwyqomdi"):

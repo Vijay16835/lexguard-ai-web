@@ -198,53 +198,51 @@ async def verify_otp(data: OTPVerify, db = Depends(get_db)):
             raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
             
         # Check purpose
+        # Check purpose: must strictly be 'registration' for user signup verification
         purpose = otp_record.get("purpose")
+        if purpose != "registration":
+            logger.warning(f"[Auth API] /verify-otp purpose mismatch: '{email}' provided code with purpose '{purpose}'")
+            raise HTTPException(status_code=400, detail="Invalid verification code for registration.")
+
+        # ONLY create the user now
+        import json
+        reg_data_str = otp_record.get("registration_data")
+        if not reg_data_str:
+            raise HTTPException(status_code=400, detail="Registration data not found. Please sign up again.")
+        reg_data = json.loads(reg_data_str)
         
-        if purpose == "registration":
-            # ONLY create the user now
-            import json
-            reg_data_str = otp_record.get("registration_data")
-            if not reg_data_str:
-                raise HTTPException(status_code=400, detail="Registration data not found. Please sign up again.")
-            reg_data = json.loads(reg_data_str)
-            
-            # Age Verification
-            dob_str = reg_data.get("date_of_birth")
-            if not dob_str:
-                raise HTTPException(status_code=400, detail="Date of birth is required to create an account.")
-            
-            try:
-                dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid date of birth format. Use YYYY-MM-DD.")
-            
-            today = datetime.now(timezone.utc).date()
-            calculated_age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-            
-            if calculated_age < 18:
-                # Delete OTP record so it cannot be reused
-                db.delete_otp_record(email)
-                logger.warning(f"[Auth API] Age verification failed: User '{email}' is {calculated_age} years old.")
-                raise HTTPException(
-                    status_code=400,
-                    detail="You must be at least 18 years old to use this application."
-                )
-            
-            # Create user and mark is_verified = True
-            user_data = db.create_user(
-                email=email,
-                password_hash=reg_data["password_hash"],
-                full_name=reg_data["full_name"],
-                is_verified=True,
-                auth_provider="email",
-                date_of_birth=dob_str,
-                age=calculated_age
+        # Age Verification
+        dob_str = reg_data.get("date_of_birth")
+        if not dob_str:
+            raise HTTPException(status_code=400, detail="Date of birth is required to create an account.")
+        
+        try:
+            dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date of birth format. Use YYYY-MM-DD.")
+        
+        today = datetime.now(timezone.utc).date()
+        calculated_age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        
+        if calculated_age < 18:
+            # Delete OTP record so it cannot be reused
+            db.delete_otp_record(email)
+            logger.warning(f"[Auth API] Age verification failed: User '{email}' is {calculated_age} years old.")
+            raise HTTPException(
+                status_code=400,
+                detail="You must be at least 18 years old to use this application."
             )
-        else:
-            # For password reset or other purposes, load existing user
-            user_data = db.get_user_by_email(email)
-            if not user_data:
-                raise HTTPException(status_code=404, detail="User not found")
+        
+        # Create user and mark is_verified = True
+        user_data = db.create_user(
+            email=email,
+            password_hash=reg_data["password_hash"],
+            full_name=reg_data["full_name"],
+            is_verified=True,
+            auth_provider="email",
+            date_of_birth=dob_str,
+            age=calculated_age
+        )
         
         # Remove OTP after successful verification
         db.delete_otp_record(email)
@@ -329,7 +327,7 @@ async def send_otp(data: SendOTP, background_tasks: BackgroundTasks, db = Depend
             email=email,
             otp_code=hashed_otp,
             expires_at=expires_at,
-            purpose=otp_record.get("purpose", "registration") if otp_record else "registration",
+            purpose="registration",
             registration_data=reg_data
         )
         if not saved:
@@ -347,7 +345,7 @@ async def send_otp(data: SendOTP, background_tasks: BackgroundTasks, db = Depend
         raise he
     except Exception as e:
         logger.error(f"[Auth API] /send-otp Unexpected error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error while resending OTP: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unable to resend verification code. Please try again.")
 
 
 def send_otp_in_background(email: str, otp_code: str):

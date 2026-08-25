@@ -91,34 +91,22 @@ def _get_pg_pool():
     # Build fallback connection DSNs (pooler vs direct vs sslmode)
     try:
         parsed = urllib.parse.urlparse(primary_url)
-        if parsed.hostname and "pooler.supabase.com" in parsed.hostname:
-            user_parts = (parsed.username or "").split(".")
-            project_id = user_parts[1] if len(user_parts) > 1 else "jrrbplpzqzvvtwyqomdi"
-            raw_pwd = urllib.parse.unquote(parsed.password or "")
-            enc_pwd = urllib.parse.quote_plus(raw_pwd)
-            
-            # Pooler DSN with sslmode=require
-            pooler_ssl = f"postgresql://postgres.{project_id}:{enc_pwd}@{parsed.hostname}:6543/postgres?sslmode=require"
-            if pooler_ssl not in urls_to_try:
-                urls_to_try.append(pooler_ssl)
+        raw_pwd = urllib.parse.unquote(parsed.password or "")
+        enc_pwd = urllib.parse.quote_plus(raw_pwd)
+        user_parts = (parsed.username or "").split(".")
+        project_id = user_parts[1] if len(user_parts) > 1 else "jrrbplpzqzvvtwyqomdi"
 
-            # Direct Supabase Connection (Port 5432) with postgres.project_id
-            direct_url1 = f"postgresql://postgres.{project_id}:{enc_pwd}@db.{project_id}.supabase.co:5432/postgres?sslmode=require"
-            if direct_url1 not in urls_to_try:
-                urls_to_try.append(direct_url1)
+        # Always construct the verified IPv4 Transaction Pooler DSN
+        pooler_ssl = f"postgresql://postgres.{project_id}:{enc_pwd}@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require"
+        
+        # Insert pooler_ssl as primary candidate if not already present
+        if pooler_ssl not in urls_to_try:
+            urls_to_try.insert(0, pooler_ssl)
 
-            # Direct Supabase Connection (Port 5432) with postgres user
-            direct_url2 = f"postgresql://postgres:{enc_pwd}@db.{project_id}.supabase.co:5432/postgres?sslmode=require"
-            if direct_url2 not in urls_to_try:
-                urls_to_try.append(direct_url2)
-        elif parsed.hostname and "supabase.co" in parsed.hostname:
-            project_id = parsed.hostname.replace("db.", "").replace(".supabase.co", "")
-            raw_pwd = urllib.parse.unquote(parsed.password or "")
-            enc_pwd = urllib.parse.quote_plus(raw_pwd)
-            
-            pooler_url = f"postgresql://postgres.{project_id}:{enc_pwd}@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require"
-            if pooler_url not in urls_to_try:
-                urls_to_try.append(pooler_url)
+        # Direct Supabase Connection (Port 5432) as fallback
+        direct_url1 = f"postgresql://postgres.{project_id}:{enc_pwd}@db.{project_id}.supabase.co:5432/postgres?sslmode=require"
+        if direct_url1 not in urls_to_try:
+            urls_to_try.append(direct_url1)
     except Exception as build_err:
         logger.warning(f"[Database Service] Error constructing fallback connection strings: {build_err}")
 
