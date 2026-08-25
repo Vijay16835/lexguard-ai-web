@@ -179,13 +179,28 @@ class FirebaseService:
             
             # Ensure users, otp_verifications and documents schema is migrated
             try:
+                # 1. Create users table if not exists
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id VARCHAR(255) PRIMARY KEY,
+                        full_name VARCHAR(255) NOT NULL,
+                        email VARCHAR(255) UNIQUE NOT NULL,
+                        hashed_password VARCHAR(255) NOT NULL,
+                        is_verified BOOLEAN DEFAULT FALSE,
+                        auth_provider VARCHAR(50) DEFAULT 'email',
+                        date_of_birth VARCHAR(50),
+                        age INTEGER,
+                        profile_image TEXT,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth VARCHAR(50);")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER;")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_image TEXT;")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'email';")
-                cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS error_message TEXT;")
                 
-                # Auto-migrate otp_verifications table
+                # 2. Auto-migrate otp_verifications table
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS otp_verifications (
                         email VARCHAR(255) PRIMARY KEY,
@@ -204,14 +219,14 @@ class FirebaseService:
                 cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;")
                 cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
 
-                # Auto-migrate login_history table
+                # 3. Auto-migrate login_history table
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS login_history (
                         id SERIAL PRIMARY KEY,
-                        user_id VARCHAR(255) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        user_id VARCHAR(255) NOT NULL,
                         email VARCHAR(255) NOT NULL,
                         login_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                        device_info VARCHAR(255),
+                        device_info TEXT,
                         ip_address VARCHAR(100)
                     );
                 """)
@@ -547,6 +562,18 @@ class FirebaseService:
 
         try:
             cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS otp_verifications (
+                    email VARCHAR(255) PRIMARY KEY,
+                    otp_code VARCHAR(255) NOT NULL,
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    is_verified BOOLEAN DEFAULT FALSE,
+                    purpose VARCHAR(50) DEFAULT 'registration',
+                    attempts INTEGER DEFAULT 0,
+                    registration_data TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
             cur.execute("""
                 INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
