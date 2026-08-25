@@ -97,21 +97,25 @@ def _get_pg_pool():
             raw_pwd = urllib.parse.unquote(parsed.password or "")
             enc_pwd = urllib.parse.quote_plus(raw_pwd)
             
-            # Direct Supabase Connection (Port 5432)
-            direct_url = f"postgresql://postgres:{enc_pwd}@db.{project_id}.supabase.co:5432/postgres?sslmode=require"
-            if direct_url not in urls_to_try:
-                urls_to_try.append(direct_url)
-                
-            # Pooler with sslmode=require
-            pooler_ssl = f"{primary_url}?sslmode=require" if "?" not in primary_url else f"{primary_url}&sslmode=require"
+            # Pooler DSN with sslmode=require
+            pooler_ssl = f"postgresql://postgres.{project_id}:{enc_pwd}@{parsed.hostname}:6543/postgres?sslmode=require"
             if pooler_ssl not in urls_to_try:
                 urls_to_try.append(pooler_ssl)
+
+            # Direct Supabase Connection (Port 5432) with postgres.project_id
+            direct_url1 = f"postgresql://postgres.{project_id}:{enc_pwd}@db.{project_id}.supabase.co:5432/postgres?sslmode=require"
+            if direct_url1 not in urls_to_try:
+                urls_to_try.append(direct_url1)
+
+            # Direct Supabase Connection (Port 5432) with postgres user
+            direct_url2 = f"postgresql://postgres:{enc_pwd}@db.{project_id}.supabase.co:5432/postgres?sslmode=require"
+            if direct_url2 not in urls_to_try:
+                urls_to_try.append(direct_url2)
         elif parsed.hostname and "supabase.co" in parsed.hostname:
             project_id = parsed.hostname.replace("db.", "").replace(".supabase.co", "")
             raw_pwd = urllib.parse.unquote(parsed.password or "")
             enc_pwd = urllib.parse.quote_plus(raw_pwd)
             
-            # Pooler Connection (Port 6543)
             pooler_url = f"postgresql://postgres.{project_id}:{enc_pwd}@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require"
             if pooler_url not in urls_to_try:
                 urls_to_try.append(pooler_url)
