@@ -641,13 +641,24 @@ async def get_me(current_user: User = Depends(get_current_user)):
 @router.get("/health")
 async def health_check():
     import os
-    commit = os.getenv("RENDER_GIT_COMMIT", "e986019")[:7]
+    from app.core.config import settings
+    
+    commit = os.getenv("RENDER_GIT_COMMIT", "007d4b9")[:7]
+    db_url = settings.DATABASE_URL or ""
+    has_placeholder = "[YOUR-SUPABASE-PASSWORD]" in db_url
+    
+    db_env_keys = [k for k in os.environ if any(x in k.upper() for x in ["POSTGRES", "SUPABASE", "DATABASE"])]
+    
     return {
         "status": "ok",
         "message": "Auth service is healthy",
         "database_provider": "Supabase PostgreSQL",
         "commit": commit,
-        "version": "1.0.2"
+        "version": "1.0.3",
+        "db_url_has_placeholder": has_placeholder,
+        "db_url_host": settings.POSTGRES_SERVER,
+        "db_url_user": settings.POSTGRES_USER,
+        "db_env_keys_present": db_env_keys
     }
 
 
