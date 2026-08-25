@@ -213,6 +213,7 @@ class FirebaseService:
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+                cur.execute("ALTER TABLE otp_verifications ALTER COLUMN otp_code TYPE VARCHAR(255);")
                 cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS purpose VARCHAR(50) DEFAULT 'registration';")
                 cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0;")
                 cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS registration_data TEXT;")
@@ -574,6 +575,7 @@ class FirebaseService:
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            cur.execute("ALTER TABLE otp_verifications ALTER COLUMN otp_code TYPE VARCHAR(255);")
             cur.execute("""
                 INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
