@@ -118,6 +118,20 @@ class Settings(BaseSettings):
 
     FIREBASE_CREDENTIALS_PATH: str = "/etc/secrets/firebase_credentials.json"
     FIREBASE_STORAGE_BUCKET: str = "lexguard-ai.appspot.com"
+    FIREBASE_PROJECT_ID: str = "lexguard-ai-e91b7"
+    FIRESTORE_DATABASE_ID: str = "(default)"
+
+    @property
+    def clean_firestore_database_id(self) -> str:
+        raw_id = os.environ.get("FIRESTORE_DATABASE_ID") or self.FIRESTORE_DATABASE_ID or "(default)"
+        db_id = str(raw_id).strip()
+        # Safely unquote repeatedly to avoid url-encoded strings like %28default%29 or %2528default%2529
+        while "%" in db_id:
+            unquoted = urllib.parse.unquote(db_id)
+            if unquoted == db_id:
+                break
+            db_id = unquoted
+        return db_id if db_id else "(default)"
 
     SUPABASE_URL: str = ""
     SUPABASE_KEY: str = ""

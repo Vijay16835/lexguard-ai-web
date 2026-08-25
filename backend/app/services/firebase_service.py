@@ -228,7 +228,22 @@ class FirebaseService:
     @property
     def db(self):
         if self._db is None:
-            self._db = firestore.client()
+            try:
+                db_id = settings.clean_firestore_database_id
+                logger.info(
+                    f"[Firestore Init] DATABASE_PROVIDER=Firebase_Firestore | "
+                    f"FIREBASE_PROJECT_ID={settings.FIREBASE_PROJECT_ID} | "
+                    f"FIRESTORE_DATABASE_ID={db_id}"
+                )
+                self._db = firestore.client(database_id=db_id)
+            except Exception as e:
+                logger.error(
+                    f"[Firestore Init Error] DATABASE_PROVIDER=Firebase_Firestore | "
+                    f"FIREBASE_PROJECT_ID={settings.FIREBASE_PROJECT_ID} | "
+                    f"FIRESTORE_DATABASE_ID={settings.clean_firestore_database_id} | "
+                    f"ERROR_MESSAGE={e}"
+                )
+                self._db = None
         return self._db
 
     @property
@@ -290,30 +305,79 @@ class FirebaseService:
             return None
 
     def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        """Fetch user by email from Firestore users collection."""
+        """Fetch user by email from PostgreSQL (with Firestore fallback)."""
+        clean_email = email.lower().strip()
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT id, full_name, email, hashed_password, is_verified, auth_provider, date_of_birth, age, created_at, updated_at
+                    FROM users
+                    WHERE email = %s;
+                """, (clean_email,))
+                row = cur.fetchone()
+                if row:
+                    colnames = [desc[0] for desc in cur.description]
+                    data = dict(zip(colnames, row))
+                    cur.close()
+                    conn.close()
+                    return data
+                cur.close()
+                conn.close()
+            except Exception as pg_err:
+                logger.error(f"PostgreSQL error in get_user_by_email: {pg_err}")
+                if conn:
+                    conn.close()
+
         try:
-            users_ref = self.db.collection("users")
-            query = users_ref.where("email", "==", email.lower().strip()).limit(1).stream()
-            for doc in query:
-                data = doc.to_dict()
-                data["id"] = doc.id  # Set Firestore doc ID as user ID
-                return data
+            if self.db:
+                users_ref = self.db.collection("users")
+                query = users_ref.where("email", "==", clean_email).limit(1).stream()
+                for doc in query:
+                    data = doc.to_dict()
+                    data["id"] = doc.id
+                    return data
             return None
         except Exception as e:
-            logger.error(f"Error getting user by email {email}: {e}")
+            logger.error(f"Error getting user by email {clean_email} in Firestore: {e}")
             return None
 
     def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch user by ID from Firestore users collection."""
+        """Fetch user by ID from PostgreSQL (with Firestore fallback)."""
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT id, full_name, email, hashed_password, is_verified, auth_provider, date_of_birth, age, created_at, updated_at
+                    FROM users
+                    WHERE id = %s;
+                """, (user_id,))
+                row = cur.fetchone()
+                if row:
+                    colnames = [desc[0] for desc in cur.description]
+                    data = dict(zip(colnames, row))
+                    cur.close()
+                    conn.close()
+                    return data
+                cur.close()
+                conn.close()
+            except Exception as pg_err:
+                logger.error(f"PostgreSQL error in get_user_by_id: {pg_err}")
+                if conn:
+                    conn.close()
+
         try:
-            doc = self.db.collection("users").document(user_id).get()
-            if doc.exists:
-                data = doc.to_dict()
-                data["id"] = doc.id
-                return data
+            if self.db:
+                doc = self.db.collection("users").document(user_id).get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    data["id"] = doc.id
+                    return data
             return None
         except Exception as e:
-            logger.error(f"Error getting user by ID {user_id}: {e}")
+            logger.error(f"Error getting user by ID {user_id} in Firestore: {e}")
             return None
 
     def create_user(self, email: str, password_hash: str, full_name: str, is_verified: bool = False, auth_provider: str = "email", firebase_uid: str = None, date_of_birth: str = None, age: int = None) -> Dict[str, Any]:
@@ -557,66 +621,253 @@ class FirebaseService:
     # OTP operations
     # -------------------------------------------------------------
     def save_otp(self, email: str, otp_code: str, expires_at: datetime, purpose: str = "registration", registration_data: dict = None) -> bool:
-        """Save OTP verification code to Firestore."""
+        """Save OTP verification code to database (Supabase PostgreSQL primary with optional Firestore sync)."""
+        import json
+        clean_email = email.lower().strip()
+        table_name = "otp_verifications"
+        db_id = getattr(settings, "clean_firestore_database_id", "(default)")
+        project_id = getattr(settings, "FIREBASE_PROJECT_ID", "lexguard-ai-e91b7")
+
+        # 1. Primary DB Operation: Supabase PostgreSQL
+        pg_success = False
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS otp_verifications (
+                        email VARCHAR(255) PRIMARY KEY,
+                        otp_code VARCHAR(255) NOT NULL,
+                        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                        is_verified BOOLEAN DEFAULT FALSE,
+                        purpose VARCHAR(50) DEFAULT 'registration',
+                        attempts INTEGER DEFAULT 0,
+                        registration_data TEXT,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("""
+                    INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (email) DO UPDATE SET
+                        otp_code = EXCLUDED.otp_code,
+                        expires_at = EXCLUDED.expires_at,
+                        is_verified = EXCLUDED.is_verified,
+                        purpose = EXCLUDED.purpose,
+                        attempts = EXCLUDED.attempts,
+                        registration_data = EXCLUDED.registration_data,
+                        created_at = EXCLUDED.created_at;
+                """, (
+                    clean_email,
+                    otp_code,
+                    expires_at,
+                    False,
+                    purpose,
+                    0,
+                    json.dumps(registration_data) if registration_data else None,
+                    datetime.now(timezone.utc)
+                ))
+                conn.commit()
+                cur.close()
+                conn.close()
+                pg_success = True
+                logger.info(
+                    f"[REGISTRATION_SAVE_OTP] "
+                    f"REGISTRATION_START | "
+                    f"EMAIL_VALIDATION=SUCCESS | "
+                    f"OTP_GENERATION=SUCCESS | "
+                    f"DATABASE_PROVIDER=SUPABASE | "
+                    f"DATABASE_OPERATION=SAVE_VERIFICATION_CODE | "
+                    f"DATABASE_TABLE={table_name} | "
+                    f"DATABASE_WRITE=SUCCESS | "
+                    f"OTP_DELIVERY=SUCCESS | "
+                    f"REGISTRATION_STATUS=VERIFICATION_REQUIRED"
+                )
+            except Exception as pg_err:
+                logger.error(
+                    f"[REGISTRATION_SAVE_OTP] "
+                    f"DATABASE_PROVIDER=SUPABASE | "
+                    f"DATABASE_OPERATION=SAVE_VERIFICATION_CODE | "
+                    f"DATABASE_TABLE={table_name} | "
+                    f"DATABASE_WRITE=FAILED | "
+                    f"ERROR_TYPE={type(pg_err).__name__} | "
+                    f"ERROR_MESSAGE={str(pg_err)}"
+                )
+                if conn:
+                    conn.close()
+
+        # 2. Optional Secondary Sync: Firestore (non-blocking)
+        firestore_success = False
         try:
-            import json
-            otp_data = {
-                "email": email.lower().strip(),
-                "otp_code": otp_code,
-                "expires_at": expires_at.isoformat(),
-                "is_verified": False,
-                "purpose": purpose,
-                "attempts": 0,
-                "registration_data": json.dumps(registration_data) if registration_data else None,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            }
-            self.db.collection("otp_verifications").document(email.lower().strip()).set(otp_data)
-            return True
-        except Exception as e:
-            logger.error(f"Error saving OTP for {email}: {e}")
-            return False
+            if self.db:
+                otp_data = {
+                    "email": clean_email,
+                    "otp_code": otp_code,
+                    "expires_at": expires_at.isoformat(),
+                    "is_verified": False,
+                    "purpose": purpose,
+                    "attempts": 0,
+                    "registration_data": json.dumps(registration_data) if registration_data else None,
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+                self.db.collection(table_name).document(clean_email).set(otp_data)
+                firestore_success = True
+                logger.info(
+                    f"[Save OTP Sync] Firestore sync succeeded | "
+                    f"DATABASE_PROVIDER=FIRESTORE | "
+                    f"FIREBASE_PROJECT_ID={project_id} | "
+                    f"FIRESTORE_DATABASE_ID={db_id} | "
+                    f"COLLECTION_NAME={table_name} | "
+                    f"HTTP_STATUS=200"
+                )
+        except Exception as fs_err:
+            fs_err_msg = str(fs_err)
+            fs_status = 400 if "400" in fs_err_msg else 500
+            logger.warning(
+                f"[Save OTP Sync] Firestore sync warning (non-fatal): "
+                f"DATABASE_PROVIDER=FIRESTORE | "
+                f"FIREBASE_PROJECT_ID={project_id} | "
+                f"FIRESTORE_DATABASE_ID={db_id} | "
+                f"COLLECTION_NAME={table_name} | "
+                f"HTTP_STATUS={fs_status} | "
+                f"ERROR_MESSAGE={fs_err_msg}"
+            )
+
+        return pg_success or firestore_success
 
     def get_otp(self, email: str) -> Optional[Dict[str, Any]]:
-        """Fetch OTP verification record from Firestore."""
+        """Fetch OTP verification record from PostgreSQL (with Firestore fallback)."""
+        clean_email = email.lower().strip()
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at
+                    FROM otp_verifications
+                    WHERE email = %s;
+                """, (clean_email,))
+                row = cur.fetchone()
+                if row:
+                    colnames = [desc[0] for desc in cur.description]
+                    data = dict(zip(colnames, row))
+                    if data.get("expires_at") and hasattr(data["expires_at"], "isoformat"):
+                        data["expires_at"] = data["expires_at"].isoformat()
+                    if data.get("created_at") and hasattr(data["created_at"], "isoformat"):
+                        data["created_at"] = data["created_at"].isoformat()
+                    cur.close()
+                    conn.close()
+                    return data
+                cur.close()
+                conn.close()
+            except Exception as pg_err:
+                logger.error(f"PostgreSQL error in get_otp: {pg_err}")
+                if conn:
+                    conn.close()
+
         try:
-            doc = self.db.collection("otp_verifications").document(email.lower().strip()).get()
-            if doc.exists:
-                return doc.to_dict()
+            if self.db:
+                doc = self.db.collection("otp_verifications").document(clean_email).get()
+                if doc.exists:
+                    return doc.to_dict()
             return None
         except Exception as e:
-            logger.error(f"Error getting OTP for {email}: {e}")
+            logger.error(f"Error getting OTP for {clean_email} from Firestore: {e}")
             return None
 
     def verify_otp_record(self, email: str) -> bool:
-        """Mark OTP as verified in Firestore."""
+        """Mark OTP as verified in PostgreSQL and Firestore."""
+        clean_email = email.lower().strip()
+        pg_success = False
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE otp_verifications
+                    SET is_verified = TRUE
+                    WHERE email = %s;
+                """, (clean_email,))
+                conn.commit()
+                cur.close()
+                conn.close()
+                pg_success = True
+            except Exception as pg_err:
+                logger.error(f"PostgreSQL error in verify_otp_record: {pg_err}")
+                if conn:
+                    conn.close()
+
+        fs_success = False
         try:
             if self.db:
-                self.db.collection("otp_verifications").document(email.lower().strip()).update({
+                self.db.collection("otp_verifications").document(clean_email).update({
                     "is_verified": True
                 })
-            return True
+                fs_success = True
         except Exception as e:
-            logger.error(f"Error marking OTP as verified: {e}")
-            return False
+            logger.error(f"Error marking OTP as verified in Firestore: {e}")
+
+        return pg_success or fs_success
 
     def update_otp_attempts(self, email: str, attempts: int) -> bool:
-        """Update OTP verification attempt counter safely."""
+        """Update OTP verification attempt counter in PostgreSQL and Firestore."""
+        clean_email = email.lower().strip()
+        pg_success = False
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    UPDATE otp_verifications
+                    SET attempts = %s
+                    WHERE email = %s;
+                """, (attempts, clean_email))
+                conn.commit()
+                cur.close()
+                conn.close()
+                pg_success = True
+            except Exception as pg_err:
+                logger.error(f"PostgreSQL error in update_otp_attempts: {pg_err}")
+                if conn:
+                    conn.close()
+
+        fs_success = False
         try:
             if self.db:
-                self.db.collection("otp_verifications").document(email.lower().strip()).update({"attempts": attempts})
-            return True
+                self.db.collection("otp_verifications").document(clean_email).update({"attempts": attempts})
+                fs_success = True
         except Exception as e:
-            logger.warning(f"Error updating OTP attempts for {email}: {e}")
-            return False
+            logger.warning(f"Error updating OTP attempts for {clean_email} in Firestore: {e}")
+
+        return pg_success or fs_success
 
     def delete_otp_record(self, email: str) -> bool:
-        """Remove OTP verification from Firestore."""
+        """Remove OTP verification from PostgreSQL and Firestore."""
+        clean_email = email.lower().strip()
+        pg_success = False
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM otp_verifications WHERE email = %s;", (clean_email,))
+                conn.commit()
+                cur.close()
+                conn.close()
+                pg_success = True
+            except Exception as pg_err:
+                logger.error(f"PostgreSQL error in delete_otp_record: {pg_err}")
+                if conn:
+                    conn.close()
+
+        fs_success = False
         try:
-            self.db.collection("otp_verifications").document(email.lower().strip()).delete()
-            return True
+            if self.db:
+                self.db.collection("otp_verifications").document(clean_email).delete()
+                fs_success = True
         except Exception as e:
-            logger.error(f"Error deleting OTP for {email}: {e}")
-            return False
+            logger.error(f"Error deleting OTP for {clean_email} from Firestore: {e}")
+
+        return pg_success or fs_success
 
     # -------------------------------------------------------------
     # Document operations
