@@ -158,13 +158,11 @@ async def run_ai_analysis(document_id: str):
         ai_prov = "Groq API" if groq_cfg == "YES" else "Local Legal Analysis Engine"
 
         logger.info(
-            f"ANALYSIS_PIPELINE_START\n"
-            f"FILE_TYPE={fmt_tag}\n"
-            f"TEXT_EXTRACTION_STATUS=SUCCESS\n"
-            f"TEXT_LENGTH={len(extracted_text)}\n"
-            f"AI_PROVIDER={ai_prov}\n"
-            f"GROQ_CONFIGURED={groq_cfg}\n"
-            f"AI_ANALYSIS_START"
+            f"DOCUMENT_ANALYSIS_START\n"
+            f"document_id={document_id}\n"
+            f"filename={doc.name}\n"
+            f"mime_type={doc.type}\n"
+            f"extracted_text_length={len(extracted_text)}"
         )
         
         db.update_document(document_id, {
@@ -190,10 +188,18 @@ async def run_ai_analysis(document_id: str):
             analysis_result = groq_service._fallback_rule_based_analysis(extracted_text)
             used_fallback = True
 
+        doc_classification = analysis_result.get("document_type", "Other / General Document")
+
         logger.info(
-            f"AI_ANALYSIS_SUCCESS\n"
-            f"FALLBACK_STATUS={'USED_LOCAL_ENGINE' if (used_fallback or groq_cfg == 'NO') else 'NOT_NEEDED'}\n"
-            f"FINAL_DOCUMENT_STATUS=completed"
+            f"DOCUMENT_CLASSIFICATION\n"
+            f"document_id={document_id}\n"
+            f"classification={doc_classification}"
+        )
+
+        logger.info(
+            f"DOCUMENT_ANALYSIS_COMPLETE\n"
+            f"document_id={document_id}\n"
+            f"classification={doc_classification}"
         )
         
         # Step 3: Save analysis results to Document
@@ -202,9 +208,9 @@ async def run_ai_analysis(document_id: str):
         try:
             db.update_document(document_id, {
                 "risk_score": analysis_result.get("risk_score", 0),
-                "risk_level": analysis_result.get("risk_level", "Medium"),
+                "risk_level": analysis_result.get("risk_level", "Low"),
                 "summary": analysis_result.get("summary", ""),
-                "document_type": analysis_result.get("document_type", "Unknown"),
+                "document_type": doc_classification,
                 "status": "completed",
                 "error_message": None,
                 "analyzed_at": datetime.now(timezone.utc).isoformat()

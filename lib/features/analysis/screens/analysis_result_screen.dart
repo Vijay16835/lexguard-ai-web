@@ -326,9 +326,9 @@ class _AnalysisResultScreenState extends State<AnalysisResultScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  doc['document_type'] ?? '',
+                  'Category: ${doc['document_type'] ?? 'Other / General Document'}',
                   style: GoogleFonts.inter(
-                      fontSize: 13, color: AppColors.textSecondary),
+                      fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.gold),
                 ),
               ],
             ),

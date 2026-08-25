@@ -2,11 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:lexguard_ai/models/document_model.dart';
 import 'package:lexguard_ai/models/summary_model.dart';
 import 'package:lexguard_ai/services/chat_service.dart';
+import 'package:lexguard_ai/services/document_service.dart';
 
 enum SummaryState { idle, processing, success, error }
 
 class SummaryProvider extends ChangeNotifier {
   final ChatService _chatService = ChatService();
+  final DocumentService _docService = DocumentService();
+
   SummaryState _state = SummaryState.idle;
   SummaryModel? _summary;
   String? _errorMessage;
@@ -78,69 +81,59 @@ class SummaryProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // Try to get summary from audioSummary API if document is uploaded,
-      // fallback to dummy/simulated data if it fails or has no backend.
-      try {
-        final data = await _chatService.getAudioSummary(document.id, language: "English");
-        final summaryText = data['summary_text'];
-        if (summaryText != null && summaryText.isNotEmpty) {
-          _summary = SummaryModel(
-            id: 'sum_${DateTime.now().millisecondsSinceEpoch}',
-            documentId: document.id,
-            shortSummary: summaryText,
-            keyClauses: [
-              'Review and analyze specific clauses in Chat or Risk sections',
-            ],
-            importantDates: [],
-            partiesInvolved: [],
-            obligations: [],
-            recommendations: [],
-            generatedAt: DateTime.now(),
-          );
-          _state = SummaryState.success;
-          notifyListeners();
-          return;
+      final res = await _docService.getSummary(document.id);
+      if (res['success'] == true && res['data'] != null) {
+        final summaryObj = res['data']['summary'] ?? res['data'];
+        final String shortSum = summaryObj['short_summary'] ?? summaryObj['summary'] ?? document.summary ?? 'Summary generated successfully.';
+        
+        List<String> keyClauses = [];
+        if (summaryObj['important_clauses'] != null) {
+          keyClauses = List<String>.from(summaryObj['important_clauses']);
+        } else if (summaryObj['key_points'] != null) {
+          keyClauses = List<String>.from(summaryObj['key_points']);
         }
-      } catch (e) {
-        debugPrint('SummaryProvider: Backend getAudioSummary failed, using simulated data: $e');
+
+        List<String> importantDates = summaryObj['important_dates'] != null ? List<String>.from(summaryObj['important_dates']) : [];
+        List<String> partiesInvolved = summaryObj['parties'] != null ? List<String>.from(summaryObj['parties']) : [];
+        List<String> obligations = summaryObj['obligations'] != null ? List<String>.from(summaryObj['obligations']) : [];
+        List<String> recommendations = summaryObj['recommendations'] != null ? List<String>.from(summaryObj['recommendations']) : [];
+
+        _summary = SummaryModel(
+          id: 'sum_${document.id}_${DateTime.now().millisecondsSinceEpoch}',
+          documentId: document.id,
+          shortSummary: shortSum,
+          keyClauses: keyClauses.isNotEmpty ? keyClauses : ['Processed document contents.'],
+          importantDates: importantDates,
+          partiesInvolved: partiesInvolved,
+          obligations: obligations,
+          recommendations: recommendations,
+          generatedAt: DateTime.now(),
+        );
+        _state = SummaryState.success;
+        notifyListeners();
+        return;
       }
+    } catch (e) {
+      debugPrint('SummaryProvider: Backend getSummary failed, checking local document summary: $e');
+    }
 
-      await Future.delayed(const Duration(seconds: 2)); // Simulating AI processing time
-
-      // Dummy implementation acting as backend response
+    if (document.summary != null && document.summary!.isNotEmpty) {
       _summary = SummaryModel(
-        id: 'sum_${DateTime.now().millisecondsSinceEpoch}',
+        id: 'sum_${document.id}_${DateTime.now().millisecondsSinceEpoch}',
         documentId: document.id,
-        shortSummary: 'This document is a Non-Disclosure Agreement (NDA) outlining confidentiality obligations between the involved parties regarding proprietary technology.',
-        keyClauses: [
-          'Confidentiality Period: 5 years',
-          'Exceptions to Confidential Information',
-          'Return of Materials upon termination'
-        ],
-        importantDates: [
-          'Effective Date: Oct 1, 2024',
-          'Expiration Date: Oct 1, 2029'
-        ],
-        partiesInvolved: [
-          'TechNova Solutions Inc. (Disclosing Party)',
-          'Alex Johnson (Receiving Party)'
-        ],
-        obligations: [
-          'Maintain absolute secrecy of technical schematics',
-          'Do not reverse engineer the provided prototypes'
-        ],
-        recommendations: [
-          'Review the definition of "Confidential Information" to ensure it is not overly broad',
-          'Clarify the governing law jurisdiction'
-        ],
+        shortSummary: document.summary!,
+        keyClauses: ['Extracted summary preview from document analysis.'],
+        importantDates: [],
+        partiesInvolved: [],
+        obligations: [],
+        recommendations: [],
         generatedAt: DateTime.now(),
       );
-
       _state = SummaryState.success;
       notifyListeners();
-    } catch (e) {
+    } else {
       _state = SummaryState.error;
-      _errorMessage = 'Failed to generate summary: $e';
+      _errorMessage = 'Unable to generate summary for this document. Please try again.';
       notifyListeners();
     }
   }

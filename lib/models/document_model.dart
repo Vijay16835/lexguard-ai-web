@@ -17,6 +17,7 @@ class DocumentModel {
   final RiskLevel? riskLevel;
   final int? riskScore;
   final String? summary;
+  final String? documentCategory;
   final String? thumbnailPath;
 
   DocumentModel({
@@ -30,6 +31,7 @@ class DocumentModel {
     this.riskLevel,
     this.riskScore,
     this.summary,
+    this.documentCategory,
     this.thumbnailPath,
   });
 
@@ -159,6 +161,7 @@ class DocumentModel {
       riskLevel: _parseRiskLevel(json['risk_level'] ?? json['riskLevel']),
       riskScore: json['risk_score'] ?? json['riskScore'],
       summary: json['summary'],
+      documentCategory: json['document_type'] ?? json['documentCategory'] ?? json['document_type_category'],
       thumbnailPath: json['thumbnailPath'],
     );
   }

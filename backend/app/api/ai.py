@@ -7,6 +7,10 @@ from app.schemas.ai import QueryRequest
 from app.services.groq_service import groq_service
 from datetime import datetime, timezone
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 
@@ -81,14 +85,26 @@ async def generate_summary(
     current_user: User = Depends(get_current_user),
 ):
     """Generate AI summary for a document."""
-    doc = _get_user_document(db, document_id, current_user.id)
-    
+    logger.info(f"SUMMARY_REQUEST_START\ndocument_id={document_id}")
     try:
-        result = await groq_service.generate_summary(doc.extracted_text)
+        doc = _get_user_document(db, document_id, current_user.id)
+        extracted_text = doc.extracted_text or ""
+        logger.info(f"SUMMARY_TEXT_FOUND\ndocument_id={document_id}\ntext_length={len(extracted_text)}")
+        provider_name = "Groq" if groq_service.is_groq_configured() else "LocalFallback"
+        logger.info(f"SUMMARY_AI_PROVIDER\nprovider={provider_name}")
+
+        result = await groq_service.generate_summary(extracted_text, doc.document_type)
+        logger.info(f"SUMMARY_SUCCESS\ndocument_id={document_id}")
         return {"success": True, "summary": result}
     except Exception as e:
-        print(f"Summary error: {e}")
-        raise HTTPException(status_code=500, detail=f"Summary generation failed: {str(e)}")
+        status_code = getattr(e, "status_code", 500)
+        logger.warning(
+            f"SUMMARY_FAILURE\n"
+            f"document_id={document_id}\n"
+            f"error_type={type(e).__name__}\n"
+            f"http_status={status_code}"
+        )
+        raise HTTPException(status_code=status_code, detail=f"Summary generation failed: {str(e)}")
 
 
 @router.post("/risk-analysis/{document_id}")

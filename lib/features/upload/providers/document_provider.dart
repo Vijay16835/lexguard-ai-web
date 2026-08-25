@@ -184,6 +184,11 @@ class DocumentProvider extends ChangeNotifier {
 
   /// Fetch document details with analysis
   Future<void> fetchDocumentDetail(String documentId) async {
+    // Purge previous state to prevent cross-document data leakage
+    _currentDocument = null;
+    _currentAnalysis = null;
+    _currentClauses = [];
+    _chatMessages = [];
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -227,9 +232,10 @@ class DocumentProvider extends ChangeNotifier {
       notifyListeners();
       return answer;
     } else {
+      final errDetail = result['message'] ?? 'Unable to generate response. Please try again.';
       _chatMessages.add({
         'role': 'assistant',
-        'content': 'Sorry, I encountered an error. Please try again.',
+        'content': errDetail,
         'timestamp': DateTime.now().toIso8601String(),
       });
       _isChatting = false;
