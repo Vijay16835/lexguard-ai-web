@@ -656,6 +656,7 @@ async def health_check():
         "db_url_has_placeholder": has_placeholder,
         "db_url_host": settings.POSTGRES_SERVER,
         "db_url_user": settings.POSTGRES_USER,
+        "last_otp_error": getattr(firebase_service, "last_otp_error", None),
         "db_env_keys_present": db_env_keys
     }
 

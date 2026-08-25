@@ -610,6 +610,7 @@ class FirebaseService:
             )
             return True
         except Exception as pg_err:
+            self.last_otp_error = f"{type(pg_err).__name__}: {str(pg_err)}"
             logger.error(
                 f"[REGISTRATION_SAVE_OTP] "
                 f"OTP_DATABASE_PROVIDER=SUPABASE | "
