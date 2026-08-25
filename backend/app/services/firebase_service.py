@@ -64,52 +64,77 @@ class _PgConnWrapper:
 
 
 def _get_pg_pool():
-    """Lazily initialise and return the shared ThreadedConnectionPool."""
+    """Lazily initialise and return the shared ThreadedConnectionPool with multi-DSN fallback and health check."""
     global _pg_pool, _pool_init_attempted, _pool_init_error
     if _pg_pool is not None:
-        return _pg_pool
-
-    try:
-        import psycopg2.pool
-        import urllib.parse
-        db_url = settings.DATABASE_URL
-        
-        # Auto-migrate direct connection to pooler connection string if needed
         try:
-            parsed = urllib.parse.urlparse(db_url)
-            if parsed.hostname and parsed.hostname.endswith(".supabase.co"):
-                logger.info(f"[Database Service] Direct Supabase connection detected: {parsed.hostname}. Migrating to pooler connection string...")
-                project_id = parsed.hostname.replace("db.", "").replace(".supabase.co", "")
-                region = "ap-south-1"  # Region based on configuration
-                pooler_host = f"aws-1-{region}.pooler.supabase.com"
-                pooler_port = 6543
-                
-                username = parsed.username
-                if username and not username.endswith(f".{project_id}"):
-                    username = f"{username}.{project_id}"
-                    
-                password = parsed.password or ""
-                decoded_password = urllib.parse.unquote(password)
-                encoded_password = urllib.parse.quote_plus(decoded_password)
-                
-                netloc = f"{username}:{encoded_password}@{pooler_host}:{pooler_port}"
-                db_url = urllib.parse.urlunparse((
-                    parsed.scheme,
-                    netloc,
-                    parsed.path,
-                    parsed.params,
-                    parsed.query,
-                    parsed.fragment
-                ))
-        except Exception as parse_err:
-            logger.warning(f"[Database Service] Failed to parse/migrate DATABASE_URL: {parse_err}")
+            # Health check existing pool
+            conn = _pg_pool.getconn()
+            _pg_pool.putconn(conn)
+            return _pg_pool
+        except Exception as pool_err:
+            logger.warning(f"[Database Service] Connection pool health check failed ({pool_err}). Re-creating pool...")
+            try:
+                _pg_pool.closeall()
+            except Exception:
+                pass
+            _pg_pool = None
+
+    import psycopg2.pool
+    import urllib.parse
+    
+    urls_to_try = []
+    primary_url = settings.DATABASE_URL
+    if primary_url:
+        urls_to_try.append(primary_url)
+
+    # Build fallback connection DSNs (pooler vs direct vs sslmode)
+    try:
+        parsed = urllib.parse.urlparse(primary_url)
+        if parsed.hostname and "pooler.supabase.com" in parsed.hostname:
+            user_parts = (parsed.username or "").split(".")
+            project_id = user_parts[1] if len(user_parts) > 1 else "jrrbplpzqzvvtwyqomdi"
+            raw_pwd = urllib.parse.unquote(parsed.password or "")
+            enc_pwd = urllib.parse.quote_plus(raw_pwd)
             
-        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 3, dsn=db_url, connect_timeout=5)
-        logger.info("psycopg2 ThreadedConnectionPool initialised (min=1, max=3).")
-    except Exception as e:
-        _pool_init_error = e
-        logger.error(f"Failed to create psycopg2 pool: {type(e).__name__}: {str(e)}")
-    return _pg_pool
+            # Direct Supabase Connection (Port 5432)
+            direct_url = f"postgresql://postgres:{enc_pwd}@db.{project_id}.supabase.co:5432/postgres?sslmode=require"
+            if direct_url not in urls_to_try:
+                urls_to_try.append(direct_url)
+                
+            # Pooler with sslmode=require
+            pooler_ssl = f"{primary_url}?sslmode=require" if "?" not in primary_url else f"{primary_url}&sslmode=require"
+            if pooler_ssl not in urls_to_try:
+                urls_to_try.append(pooler_ssl)
+        elif parsed.hostname and "supabase.co" in parsed.hostname:
+            project_id = parsed.hostname.replace("db.", "").replace(".supabase.co", "")
+            raw_pwd = urllib.parse.unquote(parsed.password or "")
+            enc_pwd = urllib.parse.quote_plus(raw_pwd)
+            
+            # Pooler Connection (Port 6543)
+            pooler_url = f"postgresql://postgres.{project_id}:{enc_pwd}@aws-1-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require"
+            if pooler_url not in urls_to_try:
+                urls_to_try.append(pooler_url)
+    except Exception as build_err:
+        logger.warning(f"[Database Service] Error constructing fallback connection strings: {build_err}")
+
+    last_err = None
+    for dsn in urls_to_try:
+        try:
+            host_name = urllib.parse.urlparse(dsn).hostname or "unknown"
+            logger.info(f"[Database Service] Attempting PostgreSQL pool connection to host: {host_name}")
+            pool = psycopg2.pool.ThreadedConnectionPool(1, 3, dsn=dsn, connect_timeout=10)
+            _pg_pool = pool
+            _pool_init_error = None
+            logger.info(f"[Database Service] Successfully initialized psycopg2 ThreadedConnectionPool for host: {host_name}")
+            return _pg_pool
+        except Exception as e:
+            last_err = e
+            logger.warning(f"[Database Service] Pool connection attempt failed for DSN host {urllib.parse.urlparse(dsn).hostname}: {e}")
+
+    _pool_init_error = last_err
+    logger.error(f"[Database Service] All database connection attempts failed. Last error: {last_err}")
+    return None
 
 # Initialize Firebase Admin SDK safely (optional integration)
 try:
