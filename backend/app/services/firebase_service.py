@@ -548,23 +548,6 @@ class FirebaseService:
         try:
             cur = conn.cursor()
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS otp_verifications (
-                    email VARCHAR(255) PRIMARY KEY,
-                    otp_code VARCHAR(255) NOT NULL,
-                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                    is_verified BOOLEAN DEFAULT FALSE,
-                    purpose VARCHAR(50) DEFAULT 'registration',
-                    attempts INTEGER DEFAULT 0,
-                    registration_data TEXT,
-                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                );
-                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS purpose VARCHAR(50) DEFAULT 'registration';
-                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0;
-                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS registration_data TEXT;
-                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
-                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-            """)
-            cur.execute("""
                 INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (email) DO UPDATE SET
