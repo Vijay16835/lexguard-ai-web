@@ -66,51 +66,49 @@ class _PgConnWrapper:
 def _get_pg_pool():
     """Lazily initialise and return the shared ThreadedConnectionPool."""
     global _pg_pool, _pool_init_attempted, _pool_init_error
-    if not _pool_init_attempted:
-        _pool_init_attempted = True
+    if _pg_pool is not None:
+        return _pg_pool
+
+    try:
+        import psycopg2.pool
+        import urllib.parse
+        db_url = settings.DATABASE_URL
+        
+        # Auto-migrate direct connection to pooler connection string if needed
         try:
-            import psycopg2.pool
-            import urllib.parse
-            # settings.DATABASE_URL is already parsed, validated, and sanitized
-            db_url = settings.DATABASE_URL
-            
-            # Auto-migrate direct connection to pooler connection string if needed
-            try:
-                parsed = urllib.parse.urlparse(db_url)
-                if parsed.hostname and parsed.hostname.endswith(".supabase.co"):
-                    logger.info(f"[Database Service] Direct Supabase connection detected: {parsed.hostname}. Migrating to pooler connection string...")
-                    project_id = parsed.hostname.replace("db.", "").replace(".supabase.co", "")
-                    region = "ap-south-1"  # Region based on configuration
-                    pooler_host = f"aws-1-{region}.pooler.supabase.com"
-                    pooler_port = 6543
-                    
-                    username = parsed.username
-                    if username and not username.endswith(f".{project_id}"):
-                        username = f"{username}.{project_id}"
-                        
-                    password = parsed.password or ""
-                    # URL-encode password properly
-                    decoded_password = urllib.parse.unquote(password)
-                    encoded_password = urllib.parse.quote_plus(decoded_password)
-                    
-                    netloc = f"{username}:{encoded_password}@{pooler_host}:{pooler_port}"
-                    db_url = urllib.parse.urlunparse((
-                        parsed.scheme,
-                        netloc,
-                        parsed.path,
-                        parsed.params,
-                        parsed.query,
-                        parsed.fragment
-                    ))
-                    logger.info(f"[Database Service] Migrated DATABASE_URL to pooler format: postgresql://{username}:****@{pooler_host}:{pooler_port}{parsed.path}")
-            except Exception as parse_err:
-                logger.warning(f"[Database Service] Failed to parse/migrate DATABASE_URL: {parse_err}")
+            parsed = urllib.parse.urlparse(db_url)
+            if parsed.hostname and parsed.hostname.endswith(".supabase.co"):
+                logger.info(f"[Database Service] Direct Supabase connection detected: {parsed.hostname}. Migrating to pooler connection string...")
+                project_id = parsed.hostname.replace("db.", "").replace(".supabase.co", "")
+                region = "ap-south-1"  # Region based on configuration
+                pooler_host = f"aws-1-{region}.pooler.supabase.com"
+                pooler_port = 6543
                 
-            _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 3, dsn=db_url, connect_timeout=5)
-            logger.info("psycopg2 ThreadedConnectionPool initialised (min=1, max=3).")
-        except Exception as e:
-            _pool_init_error = e
-            logger.error(f"Failed to create psycopg2 pool: {type(e).__name__}: {str(e)}")
+                username = parsed.username
+                if username and not username.endswith(f".{project_id}"):
+                    username = f"{username}.{project_id}"
+                    
+                password = parsed.password or ""
+                decoded_password = urllib.parse.unquote(password)
+                encoded_password = urllib.parse.quote_plus(decoded_password)
+                
+                netloc = f"{username}:{encoded_password}@{pooler_host}:{pooler_port}"
+                db_url = urllib.parse.urlunparse((
+                    parsed.scheme,
+                    netloc,
+                    parsed.path,
+                    parsed.params,
+                    parsed.query,
+                    parsed.fragment
+                ))
+        except Exception as parse_err:
+            logger.warning(f"[Database Service] Failed to parse/migrate DATABASE_URL: {parse_err}")
+            
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 3, dsn=db_url, connect_timeout=5)
+        logger.info("psycopg2 ThreadedConnectionPool initialised (min=1, max=3).")
+    except Exception as e:
+        _pool_init_error = e
+        logger.error(f"Failed to create psycopg2 pool: {type(e).__name__}: {str(e)}")
     return _pg_pool
 
 # Initialize Firebase Admin SDK
@@ -259,8 +257,11 @@ class FirebaseService:
     # -------------------------------------------------------------
     # User Operations
     # -------------------------------------------------------------
+    # -------------------------------------------------------------
+    # User Operations
+    # -------------------------------------------------------------
     def get_user_by_firebase_uid(self, firebase_uid: str) -> Optional[Dict[str, Any]]:
-        """Fetch user by Firebase UID from PostgreSQL (with Firestore fallback)."""
+        """Fetch user by ID from Supabase PostgreSQL ONLY."""
         conn = self._get_pg_conn()
         if conn:
             try:
@@ -283,29 +284,10 @@ class FirebaseService:
                 logger.error(f"PostgreSQL error in get_user_by_firebase_uid: {pg_err}")
                 if conn:
                     conn.close()
-
-        try:
-            if not self.db:
-                return None
-            # The doc ID is the Firebase UID, so direct lookup is fastest
-            doc = self.db.collection("users").document(firebase_uid).get()
-            if doc.exists:
-                data = doc.to_dict()
-                data["id"] = doc.id
-                return data
-            # Fallback: query by firebase_uid field (for legacy records)
-            query = self.db.collection("users").where("firebase_uid", "==", firebase_uid).limit(1).stream()
-            for doc in query:
-                data = doc.to_dict()
-                data["id"] = doc.id
-                return data
-            return None
-        except Exception as e:
-            logger.error(f"Error getting user by firebase_uid {firebase_uid}: {e}")
-            return None
+        return None
 
     def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        """Fetch user by email from PostgreSQL (with Firestore fallback)."""
+        """Fetch user by email from Supabase PostgreSQL ONLY."""
         clean_email = email.lower().strip()
         conn = self._get_pg_conn()
         if conn:
@@ -329,22 +311,10 @@ class FirebaseService:
                 logger.error(f"PostgreSQL error in get_user_by_email: {pg_err}")
                 if conn:
                     conn.close()
-
-        try:
-            if self.db:
-                users_ref = self.db.collection("users")
-                query = users_ref.where("email", "==", clean_email).limit(1).stream()
-                for doc in query:
-                    data = doc.to_dict()
-                    data["id"] = doc.id
-                    return data
-            return None
-        except Exception as e:
-            logger.error(f"Error getting user by email {clean_email} in Firestore: {e}")
-            return None
+        return None
 
     def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch user by ID from PostgreSQL (with Firestore fallback)."""
+        """Fetch user by ID from Supabase PostgreSQL ONLY."""
         conn = self._get_pg_conn()
         if conn:
             try:
@@ -367,48 +337,17 @@ class FirebaseService:
                 logger.error(f"PostgreSQL error in get_user_by_id: {pg_err}")
                 if conn:
                     conn.close()
-
-        try:
-            if self.db:
-                doc = self.db.collection("users").document(user_id).get()
-                if doc.exists:
-                    data = doc.to_dict()
-                    data["id"] = doc.id
-                    return data
-            return None
-        except Exception as e:
-            logger.error(f"Error getting user by ID {user_id} in Firestore: {e}")
-            return None
+        return None
 
     def create_user(self, email: str, password_hash: str, full_name: str, is_verified: bool = False, auth_provider: str = "email", firebase_uid: str = None, date_of_birth: str = None, age: int = None) -> Dict[str, Any]:
-        """Create user in Firebase Auth and Firestore users collection."""
+        """Create user in Supabase PostgreSQL ONLY."""
         email_clean = email.lower().strip()
-        user_id = firebase_uid
+        import uuid
+        user_id = firebase_uid or f"usr_{uuid.uuid4().hex[:16]}"
+        now = datetime.now(timezone.utc)
         
-        if not user_id:
-            # 1. Create in Firebase Auth
-            try:
-                # Check if user already exists in Auth
-                try:
-                    user_record = auth.get_user_by_email(email_clean)
-                    user_id = user_record.uid
-                except auth.UserNotFoundError:
-                    user_record = auth.create_user(
-                        email=email_clean,
-                        display_name=full_name,
-                        email_verified=is_verified
-                    )
-                    user_id = user_record.uid
-            except Exception as e:
-                # Fallback if Firebase Auth is offline or mocking: generate a unique string
-                logger.warning(f"Firebase Auth user creation skipped/failed, generating local ID: {e}")
-                import uuid
-                user_id = f"user_{uuid.uuid4().hex[:12]}"
-
-        # 2. Save in Firestore users collection
         user_data = {
             "id": user_id,
-            "firebase_uid": user_id,          # Explicit field for querying
             "email": email_clean,
             "full_name": full_name,
             "hashed_password": password_hash,
@@ -417,181 +356,118 @@ class FirebaseService:
             "profile_image": None,
             "date_of_birth": date_of_birth,
             "age": age,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "settings": {
-                "is_dark_mode": True,
-                "notifications_enabled": True,
-                "selected_language": "English",
-                "ai_model": "LexGuard AI Engine v2.0",
-                "analysis_depth": "Comprehensive",
-                "voice_speed": 1.0,
-                "voice_response_enabled": False
-            }
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat()
         }
-        
-        # 2.5 Dual-write to Supabase PostgreSQL
-        conn = None
-        try:
-            conn = self._get_pg_conn()
-            if conn:
-                cur = conn.cursor()
-                try:
-                    cur.execute("""
-                        INSERT INTO users (id, full_name, email, hashed_password, is_verified, auth_provider, date_of_birth, age)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (email) DO UPDATE SET 
-                            id = EXCLUDED.id,
-                            hashed_password = EXCLUDED.hashed_password,
-                            full_name = EXCLUDED.full_name,
-                            date_of_birth = EXCLUDED.date_of_birth,
-                            age = EXCLUDED.age
-                    """, (user_id, full_name, email_clean, password_hash, is_verified, auth_provider, date_of_birth, age))
-                    conn.commit()
-                finally:
-                    cur.close()
-                logger.info(f"Successfully dual-written user {user_id} to Supabase PostgreSQL")
-            else:
-                logger.error(f"Failed to get PostgreSQL connection for dual-write user {user_id}")
-        except Exception as e:
-            logger.error(f"Failed to insert user {user_id} into PostgreSQL: {e}")
-        finally:
-            if conn:
-                conn.close()
-            
-        try:
-            if self.db:
-                self.db.collection("users").document(user_id).set(user_data)
-        except Exception as fs_err:
-            logger.warning(f"Failed to save user {user_id} in Firestore (continuing with PostgreSQL): {fs_err}")
-            
-        return user_data
 
-    def update_user(self, user_id: str, updates: Dict[str, Any]) -> bool:
-        """Update user profile in Firestore."""
-        try:
-            updates["updated_at"] = datetime.now(timezone.utc).isoformat()
-            self.db.collection("users").document(user_id).update(updates)
-            
-            # Update PostgreSQL for dual-write consistency
-            conn = None
-            try:
-                conn = self._get_pg_conn()
-                if conn:
-                    cur = conn.cursor()
-                    try:
-                        set_clauses = []
-                        params = []
-                        mapping = {
-                            "full_name": "full_name",
-                            "email": "email",
-                            "is_verified": "is_verified",
-                            "hashed_password": "hashed_password",
-                            "auth_provider": "auth_provider",
-                            "profile_image": "profile_image"
-                        }
-                        for k, v in updates.items():
-                            if k in mapping:
-                                set_clauses.append(f"{mapping[k]} = %s")
-                                params.append(v)
-                        if set_clauses:
-                            set_clauses.append("updated_at = %s")
-                            params.append(datetime.now(timezone.utc))
-                            params.append(user_id)
-                            query = f"UPDATE users SET {', '.join(set_clauses)} WHERE id = %s"
-                            cur.execute(query, tuple(params))
-                            conn.commit()
-                            logger.info(f"Successfully dual-written user update for {user_id} to Supabase PostgreSQL")
-                    finally:
-                        cur.close()
-            except Exception as pg_err:
-                logger.error(f"Failed to update user {user_id} in PostgreSQL: {pg_err}")
-            finally:
-                if conn:
-                    conn.close()
-            
-            # If full_name or email is updated, reflect in Firebase Auth if available
-            try:
-                auth_updates = {}
-                if "full_name" in updates:
-                    auth_updates["display_name"] = updates["full_name"]
-                if "is_verified" in updates:
-                    auth_updates["email_verified"] = updates["is_verified"]
-                if auth_updates:
-                    auth.update_user(user_id, **auth_updates)
-            except Exception as auth_err:
-                logger.debug(f"Auth sync skipped: {auth_err}")
-                
-            return True
-        except Exception as e:
-            logger.error(f"Error updating user {user_id}: {e}")
-            return False
-
-    def update_user_password(self, user_id: str, new_password_hash: str) -> bool:
-        """Update user password hash in Firestore, Auth, and Supabase PostgreSQL."""
-        try:
-            # 1. Update Firestore
-            self.db.collection("users").document(user_id).update({
-                "hashed_password": new_password_hash,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            })
-            
-            # 2. Update PostgreSQL for dual-write consistency
-            conn = None
-            try:
-                conn = self._get_pg_conn()
-                if conn:
-                    cur = conn.cursor()
-                    try:
-                        cur.execute("""
-                            UPDATE users 
-                            SET hashed_password = %s, updated_at = %s 
-                            WHERE id = %s
-                        """, (new_password_hash, datetime.now(timezone.utc), user_id))
-                        conn.commit()
-                    finally:
-                        cur.close()
-                    logger.info(f"Successfully dual-written password update for user {user_id} to Supabase PostgreSQL")
-                else:
-                    logger.error(f"Failed to get PostgreSQL connection for dual-write password update for user {user_id}")
-            except Exception as pg_err:
-                logger.error(f"Failed to update password for user {user_id} in PostgreSQL: {pg_err}")
-            finally:
-                if conn:
-                    conn.close()
-                
-            return True
-        except Exception as e:
-            logger.error(f"Error updating password for {user_id}: {e}")
-            return False
-
-    def save_login_entry(self, user_id: str, email: str, device_info: Optional[str] = None, ip_address: Optional[str] = None) -> bool:
-        """Save a new login entry to both Firestore and PostgreSQL with required logging."""
-        print("[LOGIN] User authenticated")
-        logger.info("[LOGIN] User authenticated")
-        
-        print("[LOGIN] Saving login history")
-        logger.info("[LOGIN] Saving login history")
-
-        firestore_success = False
-        try:
-            login_data = {
-                "user_id": user_id,
-                "email": email.lower().strip(),
-                "login_time": datetime.now(timezone.utc).isoformat(),
-                "device_info": device_info,
-                "ip_address": ip_address
-            }
-            self.db.collection("login_history").add(login_data)
-            firestore_success = True
-        except Exception as e:
-            logger.error(f"Error saving login entry to Firestore: {e}")
-
-        pg_success = False
         conn = self._get_pg_conn()
         if conn:
             try:
                 cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO users (id, full_name, email, hashed_password, is_verified, auth_provider, date_of_birth, age, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (email) DO UPDATE SET 
+                        id = EXCLUDED.id,
+                        hashed_password = EXCLUDED.hashed_password,
+                        full_name = EXCLUDED.full_name,
+                        is_verified = EXCLUDED.is_verified,
+                        date_of_birth = EXCLUDED.date_of_birth,
+                        age = EXCLUDED.age,
+                        updated_at = EXCLUDED.updated_at;
+                """, (user_id, full_name, email_clean, password_hash, is_verified, auth_provider, date_of_birth, age, now, now))
+                conn.commit()
+                cur.close()
+                conn.close()
+                logger.info(f"[CREATE_USER] Saved user {user_id} ({email_clean}) to Supabase PostgreSQL")
+            except Exception as e:
+                logger.error(f"[CREATE_USER] Failed to insert user {user_id} into Supabase PostgreSQL: {e}")
+                if conn:
+                    conn.close()
+        return user_data
+
+    def update_user(self, user_id: str, updates: Dict[str, Any]) -> bool:
+        """Update user profile in Supabase PostgreSQL ONLY."""
+        conn = self._get_pg_conn()
+        if not conn:
+            return False
+        try:
+            cur = conn.cursor()
+            set_clauses = []
+            params = []
+            mapping = {
+                "full_name": "full_name",
+                "email": "email",
+                "is_verified": "is_verified",
+                "hashed_password": "hashed_password",
+                "auth_provider": "auth_provider",
+                "profile_image": "profile_image"
+            }
+            for k, v in updates.items():
+                if k in mapping:
+                    set_clauses.append(f"{mapping[k]} = %s")
+                    params.append(v)
+            if set_clauses:
+                set_clauses.append("updated_at = %s")
+                params.append(datetime.now(timezone.utc))
+                params.append(user_id)
+                query = f"UPDATE users SET {', '.join(set_clauses)} WHERE id = %s"
+                cur.execute(query, tuple(params))
+                conn.commit()
+                logger.info(f"[UPDATE_USER] Updated user {user_id} in Supabase PostgreSQL")
+            cur.close()
+            conn.close()
+            return True
+        except Exception as pg_err:
+            logger.error(f"[UPDATE_USER] Failed to update user {user_id} in Supabase PostgreSQL: {pg_err}")
+            if conn:
+                conn.close()
+            return False
+
+    def update_user_password(self, user_id: str, new_password_hash: str) -> bool:
+        """Update user password hash in Supabase PostgreSQL ONLY."""
+        conn = self._get_pg_conn()
+        if not conn:
+            return False
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE users 
+                SET hashed_password = %s, updated_at = %s 
+                WHERE id = %s
+            """, (new_password_hash, datetime.now(timezone.utc), user_id))
+            conn.commit()
+            cur.close()
+            conn.close()
+            logger.info(f"[UPDATE_PASSWORD] Password updated for user {user_id} in Supabase PostgreSQL")
+            return True
+        except Exception as pg_err:
+            logger.error(f"[UPDATE_PASSWORD] Failed to update password for user {user_id} in Supabase PostgreSQL: {pg_err}")
+            if conn:
+                conn.close()
+            return False
+
+    def save_login_entry(self, user_id: str, email: str, device_info: Optional[str] = None, ip_address: Optional[str] = None) -> bool:
+        """Save a new login entry to Supabase PostgreSQL ONLY."""
+        print("[LOGIN] User authenticated")
+        logger.info("[LOGIN] User authenticated")
+        print("[LOGIN] Saving login history to Supabase PostgreSQL")
+        logger.info("[LOGIN] Saving login history to Supabase PostgreSQL")
+
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS login_history (
+                        id SERIAL PRIMARY KEY,
+                        user_id VARCHAR(255) NOT NULL,
+                        email VARCHAR(255) NOT NULL,
+                        login_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        device_info TEXT,
+                        ip_address VARCHAR(100)
+                    );
+                """)
                 cur.execute("""
                     INSERT INTO login_history (user_id, email, login_time, device_info, ip_address)
                     VALUES (%s, %s, %s, %s, %s)
@@ -603,140 +479,103 @@ class FirebaseService:
                     ip_address
                 ))
                 conn.commit()
-                pg_success = True
                 cur.close()
                 conn.close()
+                print("[LOGIN] Login history saved")
+                logger.info("[LOGIN] Login history saved")
+                return True
             except Exception as pg_err:
                 logger.error(f"PostgreSQL error in save_login_entry: {pg_err}")
                 if conn:
                     conn.close()
-
-        if firestore_success or pg_success:
-            print("[LOGIN] Login history saved")
-            logger.info("[LOGIN] Login history saved")
-            return True
         return False
 
     # -------------------------------------------------------------
-    # OTP operations
+    # OTP operations (SUPABASE POSTGRESQL ONLY)
     # -------------------------------------------------------------
     def save_otp(self, email: str, otp_code: str, expires_at: datetime, purpose: str = "registration", registration_data: dict = None) -> bool:
-        """Save OTP verification code to database (Supabase PostgreSQL primary with optional Firestore sync)."""
+        """Save OTP verification code to Supabase PostgreSQL ONLY."""
         import json
         clean_email = email.lower().strip()
         table_name = "otp_verifications"
-        db_id = getattr(settings, "clean_firestore_database_id", "(default)")
-        project_id = getattr(settings, "FIREBASE_PROJECT_ID", "lexguard-ai-e91b7")
 
-        # 1. Primary DB Operation: Supabase PostgreSQL
-        pg_success = False
         conn = self._get_pg_conn()
-        if conn:
-            try:
-                cur = conn.cursor()
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS otp_verifications (
-                        email VARCHAR(255) PRIMARY KEY,
-                        otp_code VARCHAR(255) NOT NULL,
-                        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                        is_verified BOOLEAN DEFAULT FALSE,
-                        purpose VARCHAR(50) DEFAULT 'registration',
-                        attempts INTEGER DEFAULT 0,
-                        registration_data TEXT,
-                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                cur.execute("""
-                    INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (email) DO UPDATE SET
-                        otp_code = EXCLUDED.otp_code,
-                        expires_at = EXCLUDED.expires_at,
-                        is_verified = EXCLUDED.is_verified,
-                        purpose = EXCLUDED.purpose,
-                        attempts = EXCLUDED.attempts,
-                        registration_data = EXCLUDED.registration_data,
-                        created_at = EXCLUDED.created_at;
-                """, (
-                    clean_email,
-                    otp_code,
-                    expires_at,
-                    False,
-                    purpose,
-                    0,
-                    json.dumps(registration_data) if registration_data else None,
-                    datetime.now(timezone.utc)
-                ))
-                conn.commit()
-                cur.close()
-                conn.close()
-                pg_success = True
-                logger.info(
-                    f"[REGISTRATION_SAVE_OTP] "
-                    f"REGISTRATION_START | "
-                    f"EMAIL_VALIDATION=SUCCESS | "
-                    f"OTP_GENERATION=SUCCESS | "
-                    f"DATABASE_PROVIDER=SUPABASE | "
-                    f"DATABASE_OPERATION=SAVE_VERIFICATION_CODE | "
-                    f"DATABASE_TABLE={table_name} | "
-                    f"DATABASE_WRITE=SUCCESS | "
-                    f"OTP_DELIVERY=SUCCESS | "
-                    f"REGISTRATION_STATUS=VERIFICATION_REQUIRED"
-                )
-            except Exception as pg_err:
-                logger.error(
-                    f"[REGISTRATION_SAVE_OTP] "
-                    f"DATABASE_PROVIDER=SUPABASE | "
-                    f"DATABASE_OPERATION=SAVE_VERIFICATION_CODE | "
-                    f"DATABASE_TABLE={table_name} | "
-                    f"DATABASE_WRITE=FAILED | "
-                    f"ERROR_TYPE={type(pg_err).__name__} | "
-                    f"ERROR_MESSAGE={str(pg_err)}"
-                )
-                if conn:
-                    conn.close()
-
-        # 2. Optional Secondary Sync: Firestore (non-blocking)
-        firestore_success = False
-        try:
-            if self.db:
-                otp_data = {
-                    "email": clean_email,
-                    "otp_code": otp_code,
-                    "expires_at": expires_at.isoformat(),
-                    "is_verified": False,
-                    "purpose": purpose,
-                    "attempts": 0,
-                    "registration_data": json.dumps(registration_data) if registration_data else None,
-                    "created_at": datetime.now(timezone.utc).isoformat()
-                }
-                self.db.collection(table_name).document(clean_email).set(otp_data)
-                firestore_success = True
-                logger.info(
-                    f"[Save OTP Sync] Firestore sync succeeded | "
-                    f"DATABASE_PROVIDER=FIRESTORE | "
-                    f"FIREBASE_PROJECT_ID={project_id} | "
-                    f"FIRESTORE_DATABASE_ID={db_id} | "
-                    f"COLLECTION_NAME={table_name} | "
-                    f"HTTP_STATUS=200"
-                )
-        except Exception as fs_err:
-            fs_err_msg = str(fs_err)
-            fs_status = 400 if "400" in fs_err_msg else 500
-            logger.warning(
-                f"[Save OTP Sync] Firestore sync warning (non-fatal): "
-                f"DATABASE_PROVIDER=FIRESTORE | "
-                f"FIREBASE_PROJECT_ID={project_id} | "
-                f"FIRESTORE_DATABASE_ID={db_id} | "
-                f"COLLECTION_NAME={table_name} | "
-                f"HTTP_STATUS={fs_status} | "
-                f"ERROR_MESSAGE={fs_err_msg}"
+        if not conn:
+            logger.error(
+                f"[REGISTRATION_SAVE_OTP] "
+                f"DATABASE_PROVIDER=SUPABASE | "
+                f"DATABASE_OPERATION=SAVE_VERIFICATION_CODE | "
+                f"DATABASE_TABLE={table_name} | "
+                f"DATABASE_WRITE=FAILED | "
+                f"ERROR_TYPE=ConnectionError | "
+                f"ERROR_MESSAGE=No PostgreSQL database connection available"
             )
+            return False
 
-        return pg_success or firestore_success
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS otp_verifications (
+                    email VARCHAR(255) PRIMARY KEY,
+                    otp_code VARCHAR(255) NOT NULL,
+                    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                    is_verified BOOLEAN DEFAULT FALSE,
+                    purpose VARCHAR(50) DEFAULT 'registration',
+                    attempts INTEGER DEFAULT 0,
+                    registration_data TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            cur.execute("""
+                INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (email) DO UPDATE SET
+                    otp_code = EXCLUDED.otp_code,
+                    expires_at = EXCLUDED.expires_at,
+                    is_verified = EXCLUDED.is_verified,
+                    purpose = EXCLUDED.purpose,
+                    attempts = EXCLUDED.attempts,
+                    registration_data = EXCLUDED.registration_data,
+                    created_at = EXCLUDED.created_at;
+            """, (
+                clean_email,
+                otp_code,
+                expires_at,
+                False,
+                purpose,
+                0,
+                json.dumps(registration_data) if registration_data else None,
+                datetime.now(timezone.utc)
+            ))
+            conn.commit()
+            cur.close()
+            conn.close()
+            logger.info(
+                f"[REGISTRATION_SAVE_OTP] "
+                f"REGISTRATION_START | "
+                f"OTP_GENERATION_SUCCESS | "
+                f"OTP_DATABASE_PROVIDER=SUPABASE | "
+                f"OTP_DATABASE_TABLE={table_name} | "
+                f"OTP_DATABASE_WRITE=SUCCESS | "
+                f"OTP_DELIVERY=SUCCESS | "
+                f"REGISTRATION_STATUS=VERIFICATION_REQUIRED"
+            )
+            return True
+        except Exception as pg_err:
+            logger.error(
+                f"[REGISTRATION_SAVE_OTP] "
+                f"OTP_DATABASE_PROVIDER=SUPABASE | "
+                f"OTP_DATABASE_TABLE={table_name} | "
+                f"OTP_DATABASE_WRITE=FAILED | "
+                f"ERROR_TYPE={type(pg_err).__name__} | "
+                f"ERROR_MESSAGE={str(pg_err)}"
+            )
+            if conn:
+                conn.close()
+            return False
 
     def get_otp(self, email: str) -> Optional[Dict[str, Any]]:
-        """Fetch OTP verification record from PostgreSQL (with Firestore fallback)."""
+        """Fetch OTP verification record from Supabase PostgreSQL ONLY."""
         clean_email = email.lower().strip()
         conn = self._get_pg_conn()
         if conn:
@@ -764,21 +603,11 @@ class FirebaseService:
                 logger.error(f"PostgreSQL error in get_otp: {pg_err}")
                 if conn:
                     conn.close()
-
-        try:
-            if self.db:
-                doc = self.db.collection("otp_verifications").document(clean_email).get()
-                if doc.exists:
-                    return doc.to_dict()
-            return None
-        except Exception as e:
-            logger.error(f"Error getting OTP for {clean_email} from Firestore: {e}")
-            return None
+        return None
 
     def verify_otp_record(self, email: str) -> bool:
-        """Mark OTP as verified in PostgreSQL and Firestore."""
+        """Mark OTP as verified in Supabase PostgreSQL ONLY."""
         clean_email = email.lower().strip()
-        pg_success = False
         conn = self._get_pg_conn()
         if conn:
             try:
@@ -791,28 +620,25 @@ class FirebaseService:
                 conn.commit()
                 cur.close()
                 conn.close()
-                pg_success = True
+                logger.info(
+                    f"[OTP_VERIFY_SUCCESS] "
+                    f"OTP_VERIFY_START | "
+                    f"OTP_DATABASE_PROVIDER=SUPABASE | "
+                    f"OTP_LOOKUP=SUCCESS | "
+                    f"OTP_VALIDATION=SUCCESS | "
+                    f"OTP_DATABASE_UPDATE=SUCCESS | "
+                    f"OTP_VERIFICATION_STATUS=VERIFIED"
+                )
+                return True
             except Exception as pg_err:
                 logger.error(f"PostgreSQL error in verify_otp_record: {pg_err}")
                 if conn:
                     conn.close()
-
-        fs_success = False
-        try:
-            if self.db:
-                self.db.collection("otp_verifications").document(clean_email).update({
-                    "is_verified": True
-                })
-                fs_success = True
-        except Exception as e:
-            logger.error(f"Error marking OTP as verified in Firestore: {e}")
-
-        return pg_success or fs_success
+        return False
 
     def update_otp_attempts(self, email: str, attempts: int) -> bool:
-        """Update OTP verification attempt counter in PostgreSQL and Firestore."""
+        """Update OTP verification attempt counter in Supabase PostgreSQL ONLY."""
         clean_email = email.lower().strip()
-        pg_success = False
         conn = self._get_pg_conn()
         if conn:
             try:
@@ -825,26 +651,16 @@ class FirebaseService:
                 conn.commit()
                 cur.close()
                 conn.close()
-                pg_success = True
+                return True
             except Exception as pg_err:
                 logger.error(f"PostgreSQL error in update_otp_attempts: {pg_err}")
                 if conn:
                     conn.close()
-
-        fs_success = False
-        try:
-            if self.db:
-                self.db.collection("otp_verifications").document(clean_email).update({"attempts": attempts})
-                fs_success = True
-        except Exception as e:
-            logger.warning(f"Error updating OTP attempts for {clean_email} in Firestore: {e}")
-
-        return pg_success or fs_success
+        return False
 
     def delete_otp_record(self, email: str) -> bool:
-        """Remove OTP verification from PostgreSQL and Firestore."""
+        """Remove OTP verification from Supabase PostgreSQL ONLY."""
         clean_email = email.lower().strip()
-        pg_success = False
         conn = self._get_pg_conn()
         if conn:
             try:
@@ -853,21 +669,12 @@ class FirebaseService:
                 conn.commit()
                 cur.close()
                 conn.close()
-                pg_success = True
+                return True
             except Exception as pg_err:
                 logger.error(f"PostgreSQL error in delete_otp_record: {pg_err}")
                 if conn:
                     conn.close()
-
-        fs_success = False
-        try:
-            if self.db:
-                self.db.collection("otp_verifications").document(clean_email).delete()
-                fs_success = True
-        except Exception as e:
-            logger.error(f"Error deleting OTP for {clean_email} from Firestore: {e}")
-
-        return pg_success or fs_success
+        return False
 
     # -------------------------------------------------------------
     # Document operations

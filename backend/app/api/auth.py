@@ -57,7 +57,7 @@ async def signup(user_in: UserCreate, background_tasks: BackgroundTasks, db = De
         )
         if not saved:
             logger.error(f"[Auth API] /signup database save failure: db.save_otp returned False for '{email}'")
-            raise HTTPException(status_code=500, detail="Failed to save registration verification code to database.")
+            raise HTTPException(status_code=500, detail="Unable to complete registration verification. Please try again.")
         logger.info("OTP stored")
         logger.info(f"[Auth API] /signup: Successfully saved OTP to database for '{email}'")
         
@@ -70,7 +70,7 @@ async def signup(user_in: UserCreate, background_tasks: BackgroundTasks, db = De
         raise he
     except Exception as e:
         logger.error(f"[Auth API] /signup Unexpected registration error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error during registration: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unable to complete registration verification. Please try again.")
 
 
 @router.post("/login", response_model=Token)
