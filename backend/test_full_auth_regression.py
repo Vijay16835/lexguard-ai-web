@@ -19,6 +19,13 @@ import uuid
 import hashlib
 from datetime import datetime, timedelta, timezone
 
+# Load environment variables from .env if present
+try:
+    import dotenv
+    dotenv.load_dotenv(os.path.abspath(os.path.join(os.path.dirname(__file__), ".env")))
+except Exception:
+    pass
+
 # Add backend directory to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -65,7 +72,7 @@ def cleanup_user(email):
 # 1. REGISTRATION OTP FLOW
 # ----------------------------------------------------------------------
 print("\n[TEST 1] Testing Registration OTP Flow (Signup -> OTP -> Verify)...")
-reg_email = f"reg_test_{uuid.uuid4().hex[:8]}@lexguard.test"
+reg_email = f"reg_test_{uuid.uuid4().hex[:8]}@gmail.com"
 cleanup_user(reg_email)
 
 signup_payload = {
@@ -180,7 +187,7 @@ results["FORGOT_PASSWORD_OTP"] = "PASS"
 # 3. WRONG OTP REJECTION
 # ----------------------------------------------------------------------
 print("\n[TEST 3] Testing Wrong OTP Rejection...")
-wrong_email = f"wrong_otp_{uuid.uuid4().hex[:8]}@lexguard.test"
+wrong_email = f"wrong_otp_{uuid.uuid4().hex[:8]}@gmail.com"
 cleanup_user(wrong_email)
 
 # Setup OTP record
@@ -204,7 +211,7 @@ results["WRONG_OTP"] = "PASS"
 # 4. EXPIRED OTP REJECTION
 # ----------------------------------------------------------------------
 print("\n[TEST 4] Testing Expired OTP Rejection...")
-exp_email = f"exp_otp_{uuid.uuid4().hex[:8]}@lexguard.test"
+exp_email = f"exp_otp_{uuid.uuid4().hex[:8]}@gmail.com"
 cleanup_user(exp_email)
 
 # Save expired OTP
@@ -241,7 +248,7 @@ results["OTP_REUSE"] = "PASS"
 # 6. PURPOSE ISOLATION
 # ----------------------------------------------------------------------
 print("\n[TEST 6] Testing Purpose Isolation (Registration vs Reset Password)...")
-iso_email = f"iso_test_{uuid.uuid4().hex[:8]}@lexguard.test"
+iso_email = f"iso_test_{uuid.uuid4().hex[:8]}@gmail.com"
 cleanup_user(iso_email)
 
 # Create reset_password OTP
@@ -279,7 +286,7 @@ results["PURPOSE_ISOLATION"] = "PASS"
 # 7. MULTIPLE OTP REQUESTS / OVERWRITING
 # ----------------------------------------------------------------------
 print("\n[TEST 7] Testing Multiple OTP Requests & Overwriting...")
-multi_email = f"multi_otp_{uuid.uuid4().hex[:8]}@lexguard.test"
+multi_email = f"multi_otp_{uuid.uuid4().hex[:8]}@gmail.com"
 cleanup_user(multi_email)
 
 # First request
