@@ -1,89 +1,57 @@
-import httpx
+import urllib.request
+import json
+import uuid
 import time
-import os
-import sys
 
-BASE_URL = 'https://pdd-uw63.onrender.com/api/v1'
-print(f'Checking Production Render API: {BASE_URL}')
+BASE_URL = "https://pdd-uw63.onrender.com/api/v1"
 
-with httpx.Client(timeout=90.0) as client:
-    # 1. Health check
+def test_live_render_signup_flow():
+    print("==================================================")
+    print("   LIVE RENDER PRODUCTION AUTH & SIGNUP TEST       ")
+    print("==================================================")
+    
+    # 1. Health Check
     try:
-        r = client.get(f'{BASE_URL}/auth/health')
-        print(f'Health Check: HTTP {r.status_code} - {r.text}')
+        req = urllib.request.urlopen(f"{BASE_URL}/auth/health", timeout=10)
+        health_data = json.loads(req.read().decode())
+        print(f"[HEALTH CHECK] Status: {health_data.get('status')}, Commit: {health_data.get('commit')}")
     except Exception as e:
-        print(f'Health Check failed: {e}')
-
-    # 2. Authenticate test user via google-auth
-    print('Authenticating test user on prod via google-auth...')
-    r_auth = client.post(f'{BASE_URL}/auth/google-auth', json={
-        'firebase_uid': 'prod_verifier_uid_9999',
-        'email': 'prod_verifier@example.com',
-        'full_name': 'Production Verifier'
-    })
-    print(f'Google-auth status: {r_auth.status_code}')
-
-    if r_auth.status_code != 200:
-        print(f'Prod auth failed: {r_auth.text}')
-        sys.exit(1)
-
-    token = r_auth.json()['access_token']
-    headers = {'Authorization': f'Bearer {token}'}
-    print('Prod authenticated successfully!')
-
-    # 3. Upload test files & poll for result
-    test_files = [
-        ('sample.pdf', 'application/pdf'),
-        ('simple.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
-        ('small.txt', 'text/plain'),
-        ('sample.jpg', 'image/jpeg'),
-        ('sample.png', 'image/png'),
-    ]
-
-    prod_results = {}
-
-    for fname, mime in test_files:
-        fpath = os.path.join('backend', 'test_files', fname)
-        if not os.path.exists(fpath):
-            fpath = os.path.join('test_files', fname)
+        print(f"[HEALTH CHECK FAILED]: {e}")
+        return False
         
-        print(f'\n--- Prod Upload Test: {fname} ---')
-        t0 = time.time()
-        with open(fpath, 'rb') as f:
-            up_res = client.post(f'{BASE_URL}/documents/upload', headers=headers, files={'file': (fname, f, mime)})
-        print(f'Upload response HTTP {up_res.status_code}')
-        
-        if up_res.status_code == 200:
-            doc_id = up_res.json()['document']['id']
-            print(f'Document ID: {doc_id}. Polling status...')
-            final_status = 'pending'
-            err_msg = None
-            for poll in range(45):
-                time.sleep(2)
-                st_res = client.get(f'{BASE_URL}/documents/{doc_id}/status', headers=headers)
-                if st_res.status_code == 200:
-                    st_data = st_res.json()
-                    final_status = st_data.get('status')
-                    err_msg = st_data.get('error_message')
-                    print(f'[{poll+1}] Status: {final_status} | Error: {err_msg}')
-                    if final_status in ('completed', 'failed'):
-                        break
-            
-            elapsed = round(time.time() - t0, 2)
-            prod_results[fname] = {
-                'status': final_status,
-                'elapsed': elapsed,
-                'error': err_msg
-            }
-        else:
-            prod_results[fname] = {
-                'status': 'upload_failed',
-                'elapsed': 0,
-                'error': up_res.text
-            }
+    unique_id = uuid.uuid4().hex[:6]
+    test_email = f"produser_{unique_id}@gmail.com"
+    password = "TestUser@123456"
+    full_name = "Production Verifier"
+    dob = "1997-04-20"
 
-    print('\n========================================')
-    print(' LIVE RENDER PROD MATRIX RESULTS SUMMARY')
-    print('========================================')
-    for fname, res in prod_results.items():
-        print(f"{fname:12s} | Status: {res['status']} | Time: {res['elapsed']}s | Error: {res['error']}")
+    print(f"\n[SIGNUP REQUEST] Email: {test_email}")
+    payload = {
+        "email": test_email,
+        "password": password,
+        "full_name": full_name,
+        "date_of_birth": dob
+    }
+    
+    req = urllib.request.Request(
+        f"{BASE_URL}/auth/signup",
+        data=json.dumps(payload).encode('utf-8'),
+        headers={"Content-Type": "application/json"}
+    )
+    
+    try:
+        res = urllib.request.urlopen(req, timeout=15)
+        res_data = json.loads(res.read().decode())
+        print(f"[SIGNUP SUCCESS] HTTP {res.status}: {res_data}")
+        print("  -> OTP database write: SUCCESS (No Firestore 400 error!)")
+        return True
+    except urllib.error.HTTPError as he:
+        err_body = he.read().decode()
+        print(f"[SIGNUP HTTP ERROR] HTTP {he.code}: {err_body}")
+        return False
+    except Exception as e:
+        print(f"[SIGNUP FAILED]: {e}")
+        return False
+
+if __name__ == "__main__":
+    test_live_render_signup_flow()

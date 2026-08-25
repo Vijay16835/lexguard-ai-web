@@ -22,9 +22,9 @@ router = APIRouter()
 @router.post("/signup")
 async def signup(user_in: UserCreate, background_tasks: BackgroundTasks, db = Depends(get_db)):
     email = user_in.email.lower().strip()
-    logger.info(f"[Auth API] /signup entry: email='{email}', name='{user_in.full_name}'")
+    logger.info(f"[AUTH_DIAGNOSTIC] REGISTRATION_START | email='{email}'")
     try:
-        # Check if user already exists in Firestore
+        # Check if user already exists in Supabase PostgreSQL
         user_data = db.get_user_by_email(email)
         if user_data and user_data.get("is_verified"):
             logger.warning(f"[Auth API] /signup conflict: User with email '{email}' already exists and is verified.")
@@ -33,8 +33,7 @@ async def signup(user_in: UserCreate, background_tasks: BackgroundTasks, db = De
         # Generate random 6-digit OTP
         otp_code = "".join(random.choices(string.digits, k=6))
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
-        logger.info("OTP generated")
-        logger.info(f"[Auth API] /signup: Generated OTP '{otp_code}' for '{email}', expires at {expires_at.isoformat()}")
+        logger.info(f"[AUTH_DIAGNOSTIC] OTP_GENERATION_SUCCESS | email='{email}'")
         
         # Store registration data temporarily in the OTP verification record
         registration_data = {
@@ -58,11 +57,10 @@ async def signup(user_in: UserCreate, background_tasks: BackgroundTasks, db = De
         if not saved:
             logger.error(f"[Auth API] /signup database save failure: db.save_otp returned False for '{email}'")
             raise HTTPException(status_code=500, detail="Unable to complete registration verification. Please try again.")
-        logger.info("OTP stored")
-        logger.info(f"[Auth API] /signup: Successfully saved OTP to database for '{email}'")
+            
+        logger.info(f"[AUTH_DIAGNOSTIC] REGISTRATION_STATUS=VERIFICATION_REQUIRED | email='{email}'")
         
         # Send OTP via email in the background
-        logger.info(f"[Auth API] /signup: Dispatching email_service.send_otp_email in background to '{email}'...")
         background_tasks.add_task(send_otp_in_background, email, otp_code)
         return {"success": True, "message": "OTP sent to your email. Please verify to complete registration."}
     except HTTPException as he:
@@ -117,7 +115,7 @@ async def login(request: Request, user_in: UserLogin, db = Depends(get_db)):
         print(f"Login error: {e}")
         if isinstance(e, HTTPException):
             raise e
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
 
 
 @router.post("/google-auth", response_model=Token)
@@ -164,17 +162,20 @@ async def google_auth_endpoint(request: Request, google_in: GoogleAuth, db = Dep
         print(f"Google Auth error: {e}")
         if isinstance(e, HTTPException):
             raise e
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail="Google authentication failed. Please try again.")
 
 
 @router.post("/verify-otp")
 async def verify_otp(data: OTPVerify, db = Depends(get_db)):
+    email = data.email.lower().strip()
+    logger.info(f"[AUTH_DIAGNOSTIC] OTP_VERIFY_START | OTP_DATABASE_PROVIDER=SUPABASE | email='{email}'")
     try:
-        email = data.email.lower().strip()
         otp_record = db.get_otp(email)
         if not otp_record:
             raise HTTPException(status_code=400, detail="No verification code found. Please request a new one.")
             
+        logger.info(f"[AUTH_DIAGNOSTIC] OTP_LOOKUP=SUCCESS | email='{email}'")
+        
         # Check maximum verification attempts (5 attempts)
         attempts = otp_record.get("attempts", 0) + 1
         # Update attempts in the database
@@ -247,6 +248,7 @@ async def verify_otp(data: OTPVerify, db = Depends(get_db)):
         
         # Remove OTP after successful verification
         db.delete_otp_record(email)
+        logger.info(f"[AUTH_DIAGNOSTIC] OTP_VALIDATION=SUCCESS | OTP_DATABASE_UPDATE=SUCCESS | OTP_VERIFICATION_STATUS=VERIFIED | email='{email}'")
         
         # Reload user
         user = User(**user_data)
@@ -288,8 +290,8 @@ async def verify_otp(data: OTPVerify, db = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Verify OTP Error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error during verification")
+        logger.error(f"[Auth API] Verify OTP error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Unable to complete verification. Please try again.")
 
 
 @router.post("/send-otp")
@@ -514,7 +516,7 @@ async def send_reset_otp(data: ForgotPassword, background_tasks: BackgroundTasks
             
         raise HTTPException(
             status_code=500,
-            detail=f"{type(e).__name__}: {str(e)}"
+            detail="Unable to send password reset code. Please try again."
         )
 
 
@@ -558,7 +560,7 @@ async def verify_reset_otp(data: OTPVerify, db = Depends(get_db)):
         raise he
     except Exception as e:
         logger.error(f"[Auth API] /verify-reset-otp Unexpected error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error during verification: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unable to verify password reset code. Please try again.")
 
 
 @router.post("/reset-password")
@@ -601,7 +603,7 @@ async def reset_password(data: ResetPassword, db = Depends(get_db)):
         raise he
     except Exception as e:
         logger.error(f"[Auth API] /reset-password Unexpected error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error during password reset: {str(e)}")
+        raise HTTPException(status_code=500, detail="Unable to reset password. Please try again.")
 
 
 @router.post("/change-password")
@@ -638,11 +640,14 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 @router.get("/health")
 async def health_check():
+    import os
+    commit = os.getenv("RENDER_GIT_COMMIT", "e986019")[:7]
     return {
         "status": "ok",
         "message": "Auth service is healthy",
-        "commit": "aeb2518",
-        "version": "1.0.1"
+        "database_provider": "Supabase PostgreSQL",
+        "commit": commit,
+        "version": "1.0.2"
     }
 
 

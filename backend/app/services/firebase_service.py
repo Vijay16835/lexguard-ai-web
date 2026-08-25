@@ -111,35 +111,30 @@ def _get_pg_pool():
         logger.error(f"Failed to create psycopg2 pool: {type(e).__name__}: {str(e)}")
     return _pg_pool
 
-# Initialize Firebase Admin SDK
-cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
-if not cred_path:
-    local_default = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "firebase_credentials.json")
-    if os.path.exists(local_default):
-        cred_path = local_default
-    else:
-        logger.error("FIREBASE_CREDENTIALS_PATH environment variable is missing!")
-        raise RuntimeError("FIREBASE_CREDENTIALS_PATH environment variable is missing!")
-
-if not os.path.exists(cred_path):
-    local_fallback = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "firebase_credentials.json")
-    if os.path.exists(local_fallback):
-        logger.warning(f"Configured FIREBASE_CREDENTIALS_PATH '{cred_path}' not found, falling back to local file: {local_fallback}")
-        cred_path = local_fallback
-    else:
-        logger.error(f"Firebase credentials file not found at path: {cred_path}")
-        raise FileNotFoundError(f"Firebase credentials file not found at path: {cred_path}")
-
+# Initialize Firebase Admin SDK safely (optional integration)
 try:
-    cred = credentials.Certificate(cred_path)
-    if not firebase_admin._apps:
-        bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
-        options = {'storageBucket': bucket_name} if bucket_name else {}
-        firebase_admin.initialize_app(cred, options)
-        logger.info(f"Firebase initialized with credentials file at {cred_path}.")
+    cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH")
+    if not cred_path:
+        local_default = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "firebase_credentials.json")
+        if os.path.exists(local_default):
+            cred_path = local_default
+
+    if cred_path and not os.path.exists(cred_path):
+        local_fallback = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "firebase_credentials.json")
+        if os.path.exists(local_fallback):
+            cred_path = local_fallback
+
+    if cred_path and os.path.exists(cred_path):
+        cred = credentials.Certificate(cred_path)
+        if not firebase_admin._apps:
+            bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
+            options = {'storageBucket': bucket_name} if bucket_name else {}
+            firebase_admin.initialize_app(cred, options)
+            logger.info(f"Firebase initialized with credentials file at {cred_path}.")
+    else:
+        logger.warning("Firebase credentials file not found or not specified. Firebase Admin SDK will not be initialized. Supabase PostgreSQL remains active as primary database.")
 except Exception as e:
-    logger.error(f"Error during Firebase initialization: {e}")
-    raise e
+    logger.warning(f"Firebase Admin SDK initialization skipped/failed: {e}")
 
 
 class FirebaseService:
@@ -165,12 +160,33 @@ class FirebaseService:
             cur.execute("SELECT 1;")
             result = cur.fetchone()
             
-            # Ensure users and documents schema is migrated
+            # Ensure users, otp_verifications and documents schema is migrated
             try:
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_birth VARCHAR(50);")
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS age INTEGER;")
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_image TEXT;")
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'email';")
                 cur.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS error_message TEXT;")
                 
+                # Auto-migrate otp_verifications table
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS otp_verifications (
+                        email VARCHAR(255) PRIMARY KEY,
+                        otp_code VARCHAR(255) NOT NULL,
+                        expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                        is_verified BOOLEAN DEFAULT FALSE,
+                        purpose VARCHAR(50) DEFAULT 'registration',
+                        attempts INTEGER DEFAULT 0,
+                        registration_data TEXT,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS purpose VARCHAR(50) DEFAULT 'registration';")
+                cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0;")
+                cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS registration_data TEXT;")
+                cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;")
+                cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;")
+
                 # Auto-migrate login_history table
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS login_history (
@@ -525,6 +541,11 @@ class FirebaseService:
                     registration_data TEXT,
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                 );
+                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS purpose VARCHAR(50) DEFAULT 'registration';
+                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0;
+                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS registration_data TEXT;
+                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;
+                ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
             """)
             cur.execute("""
                 INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
