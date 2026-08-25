@@ -640,6 +640,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
 async def health_check():
     import os
     from app.core.config import settings
+    from app.services.firebase_service import firebase_service
     
     commit = os.getenv("RENDER_GIT_COMMIT", "007d4b9")[:7]
     db_url = settings.DATABASE_URL or ""
