@@ -214,6 +214,7 @@ class FirebaseService:
                     );
                 """)
                 cur.execute("ALTER TABLE otp_verifications ALTER COLUMN otp_code TYPE VARCHAR(255);")
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_otp_verifications_email ON otp_verifications (email);")
                 cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS purpose VARCHAR(50) DEFAULT 'registration';")
                 cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0;")
                 cur.execute("ALTER TABLE otp_verifications ADD COLUMN IF NOT EXISTS registration_data TEXT;")
@@ -576,6 +577,7 @@ class FirebaseService:
                 );
             """)
             cur.execute("ALTER TABLE otp_verifications ALTER COLUMN otp_code TYPE VARCHAR(255);")
+            cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_otp_verifications_email ON otp_verifications (email);")
             cur.execute("""
                 INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
