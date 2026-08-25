@@ -178,7 +178,7 @@ async def verify_otp(data: OTPVerify, db = Depends(get_db)):
         # Check maximum verification attempts (5 attempts)
         attempts = otp_record.get("attempts", 0) + 1
         # Update attempts in the database
-        db.db.collection("otp_verifications").document(email).update({"attempts": attempts})
+        db.update_otp_attempts(email, attempts)
         
         if attempts > 5:
             # Delete OTP record for security
@@ -534,7 +534,7 @@ async def verify_reset_otp(data: OTPVerify, db = Depends(get_db)):
             
         # Check attempts
         attempts = otp_record.get("attempts", 0) + 1
-        db.db.collection("otp_verifications").document(email).update({"attempts": attempts})
+        db.update_otp_attempts(email, attempts)
         if attempts > 5:
             db.delete_otp_record(email)
             raise HTTPException(status_code=400, detail="Maximum verification attempts exceeded. Please try again.")

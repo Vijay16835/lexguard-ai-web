@@ -245,8 +245,33 @@ class FirebaseService:
     # User Operations
     # -------------------------------------------------------------
     def get_user_by_firebase_uid(self, firebase_uid: str) -> Optional[Dict[str, Any]]:
-        """Fetch user by Firebase UID from Firestore users collection."""
+        """Fetch user by Firebase UID from PostgreSQL (with Firestore fallback)."""
+        conn = self._get_pg_conn()
+        if conn:
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT id, full_name, email, hashed_password, is_verified, auth_provider, date_of_birth, age, created_at, updated_at
+                    FROM users
+                    WHERE id = %s;
+                """, (firebase_uid,))
+                row = cur.fetchone()
+                if row:
+                    colnames = [desc[0] for desc in cur.description]
+                    data = dict(zip(colnames, row))
+                    cur.close()
+                    conn.close()
+                    return data
+                cur.close()
+                conn.close()
+            except Exception as pg_err:
+                logger.error(f"PostgreSQL error in get_user_by_firebase_uid: {pg_err}")
+                if conn:
+                    conn.close()
+
         try:
+            if not self.db:
+                return None
             # The doc ID is the Firebase UID, so direct lookup is fastest
             doc = self.db.collection("users").document(firebase_uid).get()
             if doc.exists:
@@ -370,7 +395,12 @@ class FirebaseService:
             if conn:
                 conn.close()
             
-        self.db.collection("users").document(user_id).set(user_data)
+        try:
+            if self.db:
+                self.db.collection("users").document(user_id).set(user_data)
+        except Exception as fs_err:
+            logger.warning(f"Failed to save user {user_id} in Firestore (continuing with PostgreSQL): {fs_err}")
+            
         return user_data
 
     def update_user(self, user_id: str, updates: Dict[str, Any]) -> bool:
@@ -560,12 +590,23 @@ class FirebaseService:
     def verify_otp_record(self, email: str) -> bool:
         """Mark OTP as verified in Firestore."""
         try:
-            self.db.collection("otp_verifications").document(email.lower().strip()).update({
-                "is_verified": True
-            })
+            if self.db:
+                self.db.collection("otp_verifications").document(email.lower().strip()).update({
+                    "is_verified": True
+                })
             return True
         except Exception as e:
             logger.error(f"Error marking OTP as verified: {e}")
+            return False
+
+    def update_otp_attempts(self, email: str, attempts: int) -> bool:
+        """Update OTP verification attempt counter safely."""
+        try:
+            if self.db:
+                self.db.collection("otp_verifications").document(email.lower().strip()).update({"attempts": attempts})
+            return True
+        except Exception as e:
+            logger.warning(f"Error updating OTP attempts for {email}: {e}")
             return False
 
     def delete_otp_record(self, email: str) -> bool:
