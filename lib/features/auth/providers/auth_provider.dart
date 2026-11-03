@@ -226,9 +226,13 @@ class AuthProvider extends ChangeNotifier {
         }
       } else {
         if (!_googleInitialized) {
-          await _googleSignIn.initialize();
+          // The web/server client ID (client_type: 3) is required by the new
+          // GoogleSignIn.instance API to return a valid idToken for Firebase.
+          await _googleSignIn.initialize(
+            serverClientId: '594776252575-cmaektc1h8ec1qf00hp4b65087n9ngq9.apps.googleusercontent.com',
+          );
           _googleInitialized = true;
-          debugPrint('[AuthProvider] GoogleSignIn initialized');
+          debugPrint('[AuthProvider] GoogleSignIn initialized with serverClientId');
         }
 
         debugPrint('[AuthProvider] Starting Google Sign-In for Mobile...');

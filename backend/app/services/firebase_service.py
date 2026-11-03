@@ -418,18 +418,21 @@ class FirebaseService:
                     INSERT INTO users (id, full_name, email, hashed_password, is_verified, auth_provider, date_of_birth, age, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (email) DO UPDATE SET 
-                        id = EXCLUDED.id,
                         hashed_password = EXCLUDED.hashed_password,
                         full_name = EXCLUDED.full_name,
                         is_verified = EXCLUDED.is_verified,
                         date_of_birth = EXCLUDED.date_of_birth,
                         age = EXCLUDED.age,
-                        updated_at = EXCLUDED.updated_at;
+                        updated_at = EXCLUDED.updated_at
+                    RETURNING id;
                 """, (user_id, full_name, email_clean, password_hash, is_verified, auth_provider, date_of_birth, age, now, now))
+                row = cur.fetchone()
+                if row:
+                    user_data["id"] = row[0]
                 conn.commit()
                 cur.close()
                 conn.close()
-                logger.info(f"[CREATE_USER] Saved user {user_id} ({email_clean}) to Supabase PostgreSQL")
+                logger.info(f"[CREATE_USER] Saved user {user_data['id']} ({email_clean}) to Supabase PostgreSQL")
             except Exception as e:
                 logger.error(f"[CREATE_USER] Failed to insert user {user_id} into Supabase PostgreSQL: {e}")
                 if conn:
@@ -578,6 +581,13 @@ class FirebaseService:
             """)
             cur.execute("ALTER TABLE otp_verifications ALTER COLUMN otp_code TYPE VARCHAR(255);")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_otp_verifications_email ON otp_verifications (email);")
+            reg_data_str = None
+            if registration_data:
+                if isinstance(registration_data, dict):
+                    reg_data_str = json.dumps(registration_data)
+                elif isinstance(registration_data, str):
+                    reg_data_str = registration_data
+
             cur.execute("""
                 INSERT INTO otp_verifications (email, otp_code, expires_at, is_verified, purpose, attempts, registration_data, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -596,7 +606,7 @@ class FirebaseService:
                 False,
                 purpose,
                 0,
-                json.dumps(registration_data) if registration_data else None,
+                reg_data_str,
                 datetime.now(timezone.utc)
             ))
             conn.commit()

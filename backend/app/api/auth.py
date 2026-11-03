@@ -8,6 +8,7 @@ from app.services.auth_service import change_password as change_pwd_service
 from app.services.email_service import email_service
 from app.api.deps import get_current_user
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 import random
 import string
 import logging
@@ -165,6 +166,24 @@ async def google_auth_endpoint(request: Request, google_in: GoogleAuth, db = Dep
         raise HTTPException(status_code=400, detail="Google authentication failed. Please try again.")
 
 
+def _parse_expires_at(val) -> Optional[datetime]:
+    if not val:
+        return None
+    if isinstance(val, datetime):
+        dt = val
+    elif isinstance(val, str):
+        try:
+            cleaned = val.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(cleaned)
+        except Exception:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 @router.post("/verify-otp")
 async def verify_otp(data: OTPVerify, db = Depends(get_db)):
     email = data.email.lower().strip()
@@ -172,6 +191,17 @@ async def verify_otp(data: OTPVerify, db = Depends(get_db)):
     try:
         otp_record = db.get_otp(email)
         if not otp_record:
+            logger.info(
+                f"[AUTH_DIAGNOSTIC] OTP_VERIFY_START\n"
+                f"EMAIL_NORMALIZED=SUCCESS\n"
+                f"OTP_RECORD_FOUND=NO\n"
+                f"OTP_PURPOSE=NONE\n"
+                f"OTP_EXPIRED=NO\n"
+                f"OTP_HASH_COMPARISON=FAIL\n"
+                f"OTP_ATTEMPTS=0\n"
+                f"OTP_DATABASE_UPDATE=FAIL\n"
+                f"OTP_VERIFICATION_STATUS=FAIL"
+            )
             raise HTTPException(status_code=400, detail="No verification code found. Please request a new one.")
             
         logger.info(f"[AUTH_DIAGNOSTIC] OTP_LOOKUP=SUCCESS | email='{email}'")
@@ -189,27 +219,58 @@ async def verify_otp(data: OTPVerify, db = Depends(get_db)):
         # Verify code matches hashed OTP
         import hashlib
         hashed_input = hashlib.sha256(data.otp.encode()).hexdigest()
-        if otp_record.get("otp_code") != hashed_input:
+        is_hash_match = (otp_record.get("otp_code") == hashed_input)
+        
+        expires_at = _parse_expires_at(otp_record.get("expires_at"))
+        now_utc = datetime.now(timezone.utc)
+        is_expired = not expires_at or (expires_at < now_utc)
+
+        purpose = otp_record.get("purpose")
+
+        logger.info(
+            f"[AUTH_DIAGNOSTIC] OTP_VERIFY_DETAILS\n"
+            f"EMAIL_NORMALIZED=SUCCESS\n"
+            f"OTP_RECORD_FOUND=YES\n"
+            f"OTP_PURPOSE={purpose}\n"
+            f"OTP_EXPIRED={'YES' if is_expired else 'NO'}\n"
+            f"OTP_HASH_COMPARISON={'PASS' if is_hash_match else 'FAIL'}\n"
+            f"OTP_ATTEMPTS={attempts}\n"
+            f"OTP_DATABASE_UPDATE=SUCCESS\n"
+            f"OTP_VERIFICATION_STATUS={'SUCCESS' if is_hash_match and not is_expired and purpose == 'registration' else 'FAIL'}"
+        )
+
+        if not is_hash_match:
             raise HTTPException(status_code=400, detail=f"Invalid verification code. Attempt {attempts} of 5.")
             
-        expires_at_str = otp_record.get("expires_at")
-        expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
-        if not expires_at or expires_at < datetime.now(timezone.utc):
+        if is_expired:
             raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
             
-        # Check purpose
         # Check purpose: must strictly be 'registration' for user signup verification
-        purpose = otp_record.get("purpose")
         if purpose != "registration":
             logger.warning(f"[Auth API] /verify-otp purpose mismatch: '{email}' provided code with purpose '{purpose}'")
             raise HTTPException(status_code=400, detail="Invalid verification code for registration.")
 
         # ONLY create the user now
         import json
-        reg_data_str = otp_record.get("registration_data")
-        if not reg_data_str:
+        reg_data_val = otp_record.get("registration_data")
+        if not reg_data_val:
             raise HTTPException(status_code=400, detail="Registration data not found. Please sign up again.")
-        reg_data = json.loads(reg_data_str)
+        
+        reg_data = None
+        if isinstance(reg_data_val, dict):
+            reg_data = reg_data_val
+        elif isinstance(reg_data_val, str):
+            try:
+                parsed = json.loads(reg_data_val)
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                if isinstance(parsed, dict):
+                    reg_data = parsed
+            except Exception as je:
+                logger.error(f"[Auth API] Invalid registration_data JSON for '{email}': {je}")
+                
+        if not reg_data:
+            raise HTTPException(status_code=400, detail="Registration data invalid. Please sign up again.")
         
         # Age Verification
         dob_str = reg_data.get("date_of_birth")
@@ -545,8 +606,7 @@ async def verify_reset_otp(data: OTPVerify, db = Depends(get_db)):
             logger.warning(f"[Auth API] /verify-reset-otp validation failure: invalid OTP/purpose for '{email}'")
             raise HTTPException(status_code=400, detail=f"Invalid verification code. Attempt {attempts} of 5.")
             
-        expires_at_str = otp_record.get("expires_at")
-        expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
+        expires_at = _parse_expires_at(otp_record.get("expires_at"))
         if not expires_at or expires_at < datetime.now(timezone.utc):
             logger.warning(f"[Auth API] /verify-reset-otp validation failure: expired OTP for '{email}'")
             raise HTTPException(status_code=400, detail="Expired OTP")
@@ -582,8 +642,7 @@ async def reset_password(data: ResetPassword, db = Depends(get_db)):
             logger.warning(f"[Auth API] /reset-password validation failure: invalid or expired OTP for '{email}'")
             raise HTTPException(status_code=400, detail="Verification expired or invalid. Please request a new code.")
             
-        expires_at_str = otp_record.get("expires_at")
-        expires_at = datetime.fromisoformat(expires_at_str) if expires_at_str else None
+        expires_at = _parse_expires_at(otp_record.get("expires_at"))
         if not expires_at or expires_at < datetime.now(timezone.utc):
             logger.warning(f"[Auth API] /reset-password validation failure: expired OTP for '{email}'")
             raise HTTPException(status_code=400, detail="OTP Expired")

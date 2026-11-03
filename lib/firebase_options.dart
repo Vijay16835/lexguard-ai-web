@@ -48,6 +48,8 @@ class DefaultFirebaseOptions {
     messagingSenderId: '594776252575',
     projectId: 'lexguard-ai-e91b7',
     storageBucket: 'lexguard-ai-e91b7.firebasestorage.app',
+    // Android OAuth client (client_type: 1) from google-services.json
+    androidClientId: '594776252575-t80ps25rn4jgabbcg135hvmgppjsphdf.apps.googleusercontent.com',
   );
 
   // ── Web ──────────────────────────────────────────────────────────────────

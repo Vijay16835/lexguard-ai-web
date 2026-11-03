@@ -53,7 +53,7 @@ class AuthService {
       );
       return {'success': true, 'data': response.data};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _extractErrorMessage(e)};
     }
   }
 
@@ -65,7 +65,7 @@ class AuthService {
       );
       return {'success': true, 'data': response.data};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _extractErrorMessage(e)};
     }
   }
 
@@ -77,7 +77,7 @@ class AuthService {
       );
       return {'success': true, 'data': response.data};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _extractErrorMessage(e)};
     }
   }
 
@@ -115,7 +115,7 @@ class AuthService {
       );
       return {'success': true, 'data': response.data};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _extractErrorMessage(e)};
     }
   }
 
@@ -127,7 +127,7 @@ class AuthService {
       );
       return {'success': true, 'data': response.data};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _extractErrorMessage(e)};
     }
   }
 

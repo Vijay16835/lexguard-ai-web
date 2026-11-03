@@ -203,7 +203,9 @@ class _DocumentCardState extends State<DocumentCard> {
                 ),
                 const SizedBox(height: 14),
                 // Badges Section
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
                   children: [
                     // Status Badge (Completed/Analyzing/Failed)
                     Container(
@@ -236,7 +238,6 @@ class _DocumentCardState extends State<DocumentCard> {
                         ],
                       ),
                     ),
-                    const SizedBox(width: 8),
                     // Risk Badge
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -254,8 +255,7 @@ class _DocumentCardState extends State<DocumentCard> {
                         ),
                       ),
                     ),
-                    if (widget.document.documentCategory != null && widget.document.documentCategory!.isNotEmpty) ...[
-                      const SizedBox(width: 8),
+                    if (widget.document.documentCategory != null && widget.document.documentCategory!.isNotEmpty)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
@@ -272,7 +272,6 @@ class _DocumentCardState extends State<DocumentCard> {
                           ),
                         ),
                       ),
-                    ],
                   ],
                 ),
                 const SizedBox(height: 12),
